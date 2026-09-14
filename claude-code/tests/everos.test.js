@@ -32,7 +32,12 @@ test("an error envelope becomes an EverosError carrying code and status", async 
   try {
     const client = createClient({ baseUrl: server.baseUrl });
     await assert.rejects(
-      () => client.add({ session_id: "s", messages: [] }, deadline(1000)),
+      // A valid body on purpose: an empty messages list is a 422 at the real
+      // EverOS (min_length=1), and this test is about the 500 path.
+      () => client.add(
+        { session_id: "s", messages: [{ sender_id: "u", role: "user", timestamp: 1789050000000, content: "hi" }] },
+        deadline(1000),
+      ),
       (err) => {
         assert.ok(err instanceof EverosError);
         assert.equal(err.status, 500);
@@ -60,11 +65,11 @@ test("a stalled server aborts at the deadline rather than hanging", async () => 
 
 test("a closed port is NETWORK_ERROR while a slow server is TIMEOUT", async () => {
   const closed = createClient({ baseUrl: "http://127.0.0.1:1" });
-  await assert.rejects(() => closed.flush({}, deadline(500)), (e) => e.code === "NETWORK_ERROR");
+  await assert.rejects(() => closed.flush({ session_id: "s" }, deadline(500)), (e) => e.code === "NETWORK_ERROR");
   const stalled = await startFakeEveros({ stall: true });
   try {
     const client = createClient({ baseUrl: stalled.baseUrl });
-    await assert.rejects(() => client.flush({}, deadline(200)), (e) => e.code === "TIMEOUT");
+    await assert.rejects(() => client.flush({ session_id: "s" }, deadline(200)), (e) => e.code === "TIMEOUT");
   } finally { await stalled.close(); }
 });
 

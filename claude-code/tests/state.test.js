@@ -70,6 +70,43 @@ test("claimWarning does not lose already-stored prompt ids", () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test("a reader never sees a half-written state file", () => {
+  // Two windows share this directory and the sweep in one writes another's file.
+  // A direct writeFileSync is observable mid-write; tmp+rename is not. Assert on
+  // the mechanism the guarantee rests on: no target file is ever opened for
+  // writing, only renamed into place.
+  const dir = tmp();
+  markStored(dir, "s1", "p1");
+  const target = statePath(dir, "s1");
+  const realWrite = fs.writeFileSync;
+  const writtenPaths = [];
+  fs.writeFileSync = (file, ...rest) => { writtenPaths.push(String(file)); return realWrite(file, ...rest); };
+  try {
+    markStored(dir, "s1", "p2");
+  } finally {
+    fs.writeFileSync = realWrite;
+  }
+  assert.equal(writtenPaths.includes(target), false, `wrote straight to ${target}; a reader could catch it half-written`);
+  assert.equal(writtenPaths.every((f) => f.endsWith(".tmp")), true, writtenPaths.join(", "));
+  assert.equal(isStored(readState(dir, "s1"), "p2"), true, "and the rename still landed the content");
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("a new turn after a seal reopens the session", () => {
+  // The seal covers what was in the buffer when it ran. A turn captured after it
+  // is unsealed again, or SessionEnd's own mark would hide it from the sweep.
+  const dir = tmp();
+  markStored(dir, "s1", "p1");
+  markFlushed(dir, "s1");
+  assert.equal(readState(dir, "s1").flushed, true);
+  markStored(dir, "s1", "p2");
+  assert.equal(readState(dir, "s1").flushed, false, "a captured turn must un-seal the session");
+  const stale = new Date(Date.now() - 60 * 60 * 1000);
+  fs.utimesSync(statePath(dir, "s1"), stale, stale);
+  assert.deepEqual(pendingFlushes(dir, 30 * 60 * 1000), [{ sessionId: "s1", projectId: null }]);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test("a corrupt state file is treated as empty, not fatal", () => {
   const dir = tmp();
   fs.mkdirSync(path.join(dir, "state"), { recursive: true });

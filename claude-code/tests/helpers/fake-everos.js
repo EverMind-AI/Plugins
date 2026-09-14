@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { validateAdd, validateSearch, validateFlush } from "./contract.js";
 
 const EMPTY_SEARCH = {
   episodes: [], profiles: [], agent_cases: [], agent_skills: [], unprocessed_messages: [],
@@ -47,8 +48,18 @@ export async function startFakeEveros(options = {}) {
         error: { code, message: `fake: ${code}`, timestamp: new Date().toISOString(), path },
       });
 
+      // Validate like EverOS does. A double that accepts anything makes every
+      // test blind to contract drift - the dimension it ignores is the one the
+      // suite cannot see - so an invalid body is a 422 here just as it is there.
+      const reject = (errors) => send(422, {
+        request_id: "0".repeat(32),
+        error: { code: "VALIDATION_ERROR", message: `contract: ${errors.join("; ")}`, timestamp: new Date().toISOString(), path },
+      });
+
       if (path === "/health" && req.method === "GET") return send(200, healthBody);
       if (path === "/api/v2/memory/search") {
+        const bad = validateSearch(body);
+        if (bad.length) return reject(bad);
         try {
           return send(200, { request_id: "0".repeat(32), data: await searchFn(body) });
         } catch (error) {
@@ -56,11 +67,15 @@ export async function startFakeEveros(options = {}) {
         }
       }
       if (path === "/api/v2/memory/add") {
+        const bad = validateAdd(body);
+        if (bad.length) return reject(bad);
         if (addHandler && addHandler(body) === "fail") return fail(500, "INTERNAL_ERROR");
         if (addStatus !== 200) return fail(addStatus, "INTERNAL_ERROR");
         return send(200, { request_id: "0".repeat(32), data: { message_count: body?.messages?.length ?? 0, status: "accumulated" } });
       }
       if (path === "/api/v2/memory/flush") {
+        const bad = validateFlush(body);
+        if (bad.length) return reject(bad);
         if (flushStatus !== 200) return fail(flushStatus, "INTERNAL_ERROR");
         if (flushDelayMs) await new Promise((r) => setTimeout(r, flushDelayMs));
         return send(200, { request_id: "0".repeat(32), data: { status: "extracted" } });

@@ -102,6 +102,32 @@ test("the whole sweep shares one budget so it cannot outrun the hook timeout", a
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test("the sweep stops when its budget is gone, leaving the rest for next time", async () => {
+  // Five sessions, each flush slower than the whole 6s budget. Without the
+  // budget check the loop would keep going and run past the 15s hook timeout;
+  // with it, the first one spends the budget and the rest are left unsealed.
+  const server = await startFakeEveros({ flushDelayMs: 4000 });
+  const dir = tmp();
+  try {
+    const stale = new Date(Date.now() - 60 * 60 * 1000);
+    for (const id of ["a1", "a2", "a3", "a4", "a5"]) {
+      markStored(dir, id, "p1", "proj");
+      fs.utimesSync(statePath(dir, id), stale, stale);
+    }
+    const started = Date.now();
+    const { code } = await runHookScript(SCRIPT, { session_id: "new", cwd: "/w", source: "startup" }, {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.equal(code, 0);
+    assert.ok(Date.now() - started < 12000, "the whole sweep shares one budget");
+    const attempted = server.only("/api/v2/memory/flush").length;
+    assert.ok(attempted < 5, `stopped early, attempted ${attempted} of 5`);
+    const stillPending = ["a1", "a2", "a3", "a4", "a5"].filter((id) => readState(dir, id).flushed === false);
+    assert.ok(stillPending.length > 0, "the ones it could not reach stay pending for the next session");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test("a session that is merely idle in another window is left alone", async () => {
   const server = await startFakeEveros();
   const dir = tmp();

@@ -38,10 +38,6 @@ async function sweepAbandoned(config, cwd, debug) {
   const client = createClient({ baseUrl: config.baseUrl });
   const signal = deadline(SWEEP_BUDGET_MS);
   for (const { sessionId, projectId } of abandoned) {
-    if (signal.aborted) {
-      debug("sweep budget spent; the rest wait for the next session");
-      return;
-    }
     try {
       await client.flush(
         // The recorded project, not this session's: the abandoned session may
@@ -52,8 +48,11 @@ async function sweepAbandoned(config, cwd, debug) {
       markFlushed(config.dataDir, sessionId);
       debug(`sealed abandoned session ${sessionId}`);
     } catch (error) {
+      // Out of budget, or the server is unwell - either way stop. The shared
+      // signal means every later flush would fail instantly anyway, so this
+      // return is the only exit the loop needs.
       debug(`could not seal ${sessionId}: ${error.message}`);
-      return; // out of budget, or the server is unwell; either way, stop
+      return;
     }
   }
 }
