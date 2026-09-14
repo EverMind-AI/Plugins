@@ -254,14 +254,35 @@ so once per session, naming the host.
 cd claude-code
 npm test                          # node:test, no dependencies
 claude plugin validate . --strict
-./scripts/e2e.sh                  # end-to-end against a REAL EverOS
+./scripts/e2e.sh                  # the four hooks against a REAL EverOS
+./scripts/e2e-claude-code.sh      # REAL Claude Code sessions against a REAL EverOS
 ```
 
-`scripts/e2e.sh` drives the four hooks exactly as Claude Code would, against a
-running EverOS, and verifies by backend receipt — markdown on disk and a real
-search — rather than by asking a chat whether it remembers. It needs LLM
-credentials, so it is not part of CI. Point it elsewhere with
-`EVEROS_CC_BASE_URL` and `EVEROS_ROOT` (the server's `--root`).
+Two end-to-end scripts, because they answer different questions.
+
+`scripts/e2e.sh` feeds the hooks synthetic stdin. It proves the wire contract
+and the parts an algorithm decides deterministically - including that a
+trajectory with a detour produces an agent case - but it never starts Claude
+Code, so it cannot tell you the host still calls the hooks.
+
+`scripts/e2e-claude-code.sh` starts real Claude Code sessions, headless and in
+a real terminal under tmux, and asks whether memory took effect. It judges by
+backend receipt: the markdown on disk, a real search, and the context the
+plugin actually put in front of the model, read back from the transcript. A
+session that is still open can always answer from its own context, so every
+case here crosses a process boundary. Eight cases: cross-session recall, that
+another repository cannot see it, that a worktree can, the trajectory a
+tool-using session sends, fail-open, the sweep, that host noise never becomes
+memory, and an interactive terminal.
+
+Both need LLM credentials, so neither runs in CI. Each starts its own EverOS on
+its own port under its own root and never touches a server you are running.
+
+```bash
+# point them somewhere, or override just the llm section
+E2E_PORT=8899 E2E_LLM_API_KEY=sk-... ./scripts/e2e-claude-code.sh
+./scripts/e2e-claude-code.sh 1 5          # only cases 1 and 5
+```
 
 Design and rationale: [`docs/DESIGN_DOC.md`](docs/DESIGN_DOC.md).
 

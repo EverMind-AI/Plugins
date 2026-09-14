@@ -196,10 +196,23 @@ export EVEROS_CC_START_CMD="uv run everos server start"
 cd claude-code
 npm test                          # node:test，无依赖
 claude plugin validate . --strict
-./scripts/e2e.sh                  # 对着真实 EverOS 做端到端验收
+./scripts/e2e.sh                  # 四个 hook 对真实 EverOS
+./scripts/e2e-claude-code.sh      # 真实 Claude Code 会话对真实 EverOS
 ```
 
-`scripts/e2e.sh` 以 Claude Code 的方式驱动四个 hook，对着运行中的 EverOS 跑，并通过后端凭证验证 —— 磁盘上的 markdown 和一次真实搜索 —— 而不是问聊天「你记得吗」。它需要 LLM 凭据，因此不进 CI。用 `EVEROS_CC_BASE_URL` 和 `EVEROS_ROOT`（server 的 `--root`）指向别处。
+两个端到端脚本，回答的是不同的问题。
+
+`scripts/e2e.sh` 用构造的 stdin 喂 hook。它验的是线协议契约，以及算法能确定性给出的那部分——包括「带迂回的轨迹能产出 agent case」——但它从不启动 Claude Code，所以证明不了宿主还在调用这些 hook。
+
+`scripts/e2e-claude-code.sh` 启动真实的 Claude Code 会话（headless 和 tmux 里的真实终端各一种），问的是记忆到底生没生效。判据是后端凭证：磁盘上的 markdown、一次真实搜索，以及**插件实际塞到模型面前的那段上下文**（从 transcript 里读回来）。会话还开着的时候它总能从自己的上下文里作答，所以这里每条用例都跨进程。八条：跨会话召回、别的仓库看不到、同仓 worktree 看得到、带工具的会话发出的轨迹、fail-open、补封、宿主噪声不入库、交互式终端。
+
+两个都需要 LLM 凭据，因此都不进 CI。各自在独立端口、独立 root 上起自己的 EverOS，绝不碰你正在用的那个。
+
+```bash
+# 指到别处，或只覆盖 llm 一段
+E2E_PORT=8899 E2E_LLM_API_KEY=sk-... ./scripts/e2e-claude-code.sh
+./scripts/e2e-claude-code.sh 1 5          # 只跑 1 和 5
+```
 
 设计与取舍：[`docs/DESIGN_DOC.md`](docs/DESIGN_DOC.md)。
 
