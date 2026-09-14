@@ -82,9 +82,9 @@ export function markStored(dataDir, sessionId, promptId, projectId = null) {
   });
 }
 
-export function markFlushed(dataDir, sessionId) {
+export function markFlushed(dataDir, sessionId, flushed = true) {
   const state = readState(dataDir, sessionId);
-  writeState(dataDir, sessionId, { ...state, sessionId, flushed: true });
+  writeState(dataDir, sessionId, { ...state, sessionId, flushed });
 }
 
 /**

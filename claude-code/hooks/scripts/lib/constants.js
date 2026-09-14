@@ -25,7 +25,21 @@ export const RECALL_DEADLINE_MS = 5000;
 export const RECALL_DEADLINE_MIN_MS = 500;
 export const RECALL_DEADLINE_MAX_MS = 7000;
 export const CAPTURE_DEADLINE_MS = 20000;
-export const FLUSH_DEADLINE_MS = 10000;
+/**
+ * How long a seal waits for its answer - not how long the seal takes.
+ *
+ * A flush with real content runs a full LLM extraction and takes about 5s, but
+ * the host gives a session-end hook roughly 4s before it stops waiting and
+ * prints "Hook cancelled" (measured: 4.1s from /exit to process exit in an
+ * interactive terminal, and the same in `claude -p`). Waiting for the answer
+ * therefore loses the race almost every time there is anything to seal.
+ *
+ * There is nothing to wait for: verified against a live 1.3.1 that EverOS
+ * completes the extraction and writes the markdown even when the client
+ * disconnects 0.3s into the request. So the hook only needs the request to
+ * leave the machine.
+ */
+export const FLUSH_DISPATCH_MS = 1500;
 
 export const SECTION_MAX_ITEMS = 5;
 export const ID_MAX_LEN = 128;

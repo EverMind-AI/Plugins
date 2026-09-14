@@ -31,10 +31,16 @@ export function createClient({ baseUrl, fetchImpl = fetch }) {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
     } catch (cause) {
-      const reason = cause?.name === "TimeoutError" || cause?.name === "AbortError"
-        ? "deadline exceeded"
-        : String(cause?.message ?? cause);
-      throw new EverosError(0, "NETWORK_ERROR", `${method} ${path} failed: ${reason}`, path);
+      // TIMEOUT and NETWORK_ERROR mean different things to a caller that only
+      // needs the request to arrive: a timeout means the socket was open and
+      // EverOS has the body, a network error means it never got there.
+      const timedOut = cause?.name === "TimeoutError" || cause?.name === "AbortError";
+      throw new EverosError(
+        0,
+        timedOut ? "TIMEOUT" : "NETWORK_ERROR",
+        `${method} ${path} failed: ${timedOut ? "deadline exceeded" : String(cause?.message ?? cause)}`,
+        path,
+      );
     }
 
     let parsed;

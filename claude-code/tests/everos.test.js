@@ -50,10 +50,22 @@ test("a stalled server aborts at the deadline rather than hanging", async () => 
     const started = Date.now();
     await assert.rejects(
       () => client.search({ user_id: "me", query: "q" }, deadline(300)),
-      (err) => err instanceof EverosError && err.code === "NETWORK_ERROR",
+      // TIMEOUT, not NETWORK_ERROR: the socket was open, so the server has the
+      // request even though we gave up on the answer. flush.js turns on this.
+      (err) => err instanceof EverosError && err.code === "TIMEOUT",
     );
     assert.ok(Date.now() - started < 2000, "must abort near the deadline");
   } finally { await server.close(); }
+});
+
+test("a closed port is NETWORK_ERROR while a slow server is TIMEOUT", async () => {
+  const closed = createClient({ baseUrl: "http://127.0.0.1:1" });
+  await assert.rejects(() => closed.flush({}, deadline(500)), (e) => e.code === "NETWORK_ERROR");
+  const stalled = await startFakeEveros({ stall: true });
+  try {
+    const client = createClient({ baseUrl: stalled.baseUrl });
+    await assert.rejects(() => client.flush({}, deadline(200)), (e) => e.code === "TIMEOUT");
+  } finally { await stalled.close(); }
 });
 
 test("a closed port is a NETWORK_ERROR, not a crash", async () => {

@@ -229,7 +229,7 @@ typed; images and other attachments.
 | No `🧠 EverOS` line, no warning either | The prompt was skipped: memory is not searched for slash commands or prompts under three words. |
 | Cases never appear under `agents/` | EverOS rejects trajectories with no detour and a single user message. Cases come from real multi-turn work, not from one-shot questions. |
 | Hooks appear to do nothing at all | `node` is not on the `PATH` Claude Code was launched with. Check with `/everos:status`; if that also fails to run, that is the cause. |
-| `SessionEnd hook … Hook cancelled` | The host cancelled the seal on exit; routine under `claude -p`. The next session seals it, so nothing is lost. |
+| `SessionEnd hook … Hook cancelled` | Expected, and harmless. The host stops waiting for the hook a few hundred milliseconds into shutdown, in an interactive terminal as much as under `claude -p`. The request has already left and EverOS finishes the work without a client attached; a later session re-seals only if it never arrived. |
 | Recall times out | Raise `EVEROS_CC_RECALL_TIMEOUT_MS`. Also check `/everos:status` for a large index queue. |
 
 Logs live in the data directory (`/everos:status` prints the path):

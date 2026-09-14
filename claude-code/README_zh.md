@@ -179,7 +179,7 @@ export EVEROS_CC_START_CMD="uv run everos server start"
 | 既没有 `🧠 EverOS` 行也没有警告 | 这条 prompt 被跳过了：斜杠命令和不足三个词的输入不会触发搜索。 |
 | `agents/` 下始终没有 case | EverOS 会拒绝「没有迂回、只有一条用户消息」的轨迹。case 来自真实的多轮工作，不是一问一答。 |
 | hook 完全没反应 | 启动 Claude Code 的那个环境的 `PATH` 上没有 `node`。用 `/everos:status` 确认；如果它也跑不起来，就是这个原因。 |
-| `SessionEnd hook … Hook cancelled` | 宿主退出时取消了封存，`claude -p` 下很常见。下一个会话会补上，不会丢东西。 |
+| `SessionEnd hook … Hook cancelled` | 正常现象，无害。宿主在关停后几百毫秒就不再等这个 hook 了，交互式终端和 `claude -p` 一样。此时请求早已发出，EverOS 会在没有客户端连着的情况下把抽取做完；只有请求根本没送到时，后续会话才会补封。 |
 | 召回超时 | 调大 `EVEROS_CC_RECALL_TIMEOUT_MS`。同时看 `/everos:status` 里的索引队列是否积压。 |
 
 日志在数据目录下（`/everos:status` 会打印路径）：`debug.log`（需要先设 `EVEROS_CC_DEBUG=1`）和 `everos-server.log`（插件启动的 server 才有）。
