@@ -37,6 +37,55 @@ test("render lays out the four sections in a fenced, labelled block", () => {
   assert.deepEqual(out.counts, { episodes: 1, cases: 1, skills: 1, profile: true });
 });
 
+test("near-identical memories do not each take a slot", () => {
+  // Real data after asking the same question in three sessions: EverOS makes an
+  // episode per session, and all three say the same thing in slightly different
+  // words. Rendering all three spent three of five slots and 900 of 1587
+  // characters restating one fact.
+  const out = render(
+    { ...empty, episodes: [
+      { id: "e1", subject: "iu asked about the line-length setting", summary: "claude-code answered 88 and pointed at pyproject.toml", atomic_facts: [] },
+      { id: "e2", subject: "iu asked about the line-length setting", summary: "claude-code answered 88, pointing at pyproject.toml", atomic_facts: [] },
+      { id: "e3", subject: "iu asked about the line-length setting", summary: "claude-code answered 88", atomic_facts: [] },
+      { id: "e4", subject: "Canary branch", summary: "the canary branch is sparrow-7", atomic_facts: [] },
+    ] },
+    empty,
+  );
+  const items = out.block.split("\n").filter((l) => l.startsWith("- "));
+  assert.equal(items.length, 2, `expected the three restatements to collapse: ${items.join(" | ")}`);
+  assert.ok(out.block.includes("sparrow-7"), "the unrelated memory must survive");
+  assert.equal(out.counts.episodes, 2);
+});
+
+test("a repeated atomic fact appears once across the whole block", () => {
+  const shared = { id: "f", content: "the project uses ruff and never black" };
+  const out = render(
+    { ...empty, episodes: [
+      { id: "e1", subject: "Lint one", summary: "first conversation about linting", atomic_facts: [shared, { id: "g", content: "line-length is 88" }] },
+      { id: "e2", subject: "Lint two", summary: "a later conversation about tooling", atomic_facts: [{ ...shared, id: "f2" }] },
+    ] },
+    empty,
+  );
+  const occurrences = out.block.split("\n").filter((l) => l.includes("uses ruff and never black")).length;
+  assert.equal(occurrences, 1, "the same fact under two episodes is still one fact");
+  assert.ok(out.block.includes("line-length is 88"), "the distinct fact stays");
+});
+
+test("genuinely different memories that share vocabulary both survive", () => {
+  const out = render(
+    { ...empty, episodes: [
+      { id: "e1", subject: "Deploy target", summary: "the deploy target is blue-harbor", atomic_facts: [] },
+      { id: "e2", subject: "Canary branch", summary: "the canary branch is sparrow-7", atomic_facts: [] },
+      { id: "e3", subject: "Watchdog port", summary: "the watchdog port is 9931", atomic_facts: [] },
+    ] },
+    empty,
+  );
+  for (const needle of ["blue-harbor", "sparrow-7", "9931"]) {
+    assert.ok(out.block.includes(needle), `${needle} was wrongly collapsed`);
+  }
+  assert.equal(out.counts.episodes, 3);
+});
+
 test("render caps every section at five items", () => {
   const many = Array.from({ length: 9 }, (_, i) => ({ id: `e${i}`, subject: `S${i}`, summary: `m${i}`, atomic_facts: [] }));
   const out = render({ ...empty, episodes: many }, empty);

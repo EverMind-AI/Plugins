@@ -16,6 +16,12 @@ const PROFILE_TRAITS_MAX = 4;
  */
 const ITEM_MAX_CHARS = 300;
 /**
+ * How much of a line's vocabulary must already have been said for it to be
+ * dropped. High enough that two memories about different subjects both survive
+ * even when they share ordinary words.
+ */
+const DEDUPE_CONTAINMENT = 0.8;
+/**
  * Cap for the assembled block, about 2000 tokens. The per-line cap alone is not
  * enough: a full profile plus five episodes with three facts each, five cases
  * and five skills reaches roughly 14 kB, which is a lot to spend on every
@@ -60,14 +66,18 @@ function joinDash(...parts) {
   return parts.map((part) => oneLine(part)).filter(Boolean).join(" — ");
 }
 
-function renderEpisode(item) {
+function renderEpisode(item, seen) {
   const head = joinDash(item.subject, item.summary) || oneLine(item.episode);
   if (!head) return null;
-  const facts = (item.atomic_facts ?? [])
-    .slice(0, FACTS_PER_EPISODE)
-    .map((f) => oneLine(f?.content))
-    .filter(Boolean)
-    .map((t) => `  · ${t}`);
+  const facts = [];
+  for (const fact of item.atomic_facts ?? []) {
+    if (facts.length >= FACTS_PER_EPISODE) break;
+    const text = oneLine(fact?.content);
+    // The same fact is commonly attached to several episodes; it is one fact.
+    if (!text || saysNothingNew(text, seen)) continue;
+    seen.push(meaningfulTokens(text));
+    facts.push(`  · ${text}`);
+  }
   return [`- ${head}`, ...facts].join("\n");
 }
 
@@ -123,8 +133,51 @@ function renderSkill(item) {
   return head ? `- ${head}` : null;
 }
 
-function section(label, items, renderer, max = SECTION_MAX_ITEMS) {
-  const rendered = (items ?? []).slice(0, max).map(renderer).filter(Boolean);
+/**
+ * Words that carry meaning, for judging whether two lines say the same thing.
+ * Latin words and CJK characters both count; punctuation and case do not.
+ */
+function meaningfulTokens(line) {
+  const text = line.replace(/^[-\s·]+/, "").toLowerCase();
+  const cjk = text.match(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/g) ?? [];
+  const latin = text.replace(/[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/g, " ")
+    .match(/[a-z0-9][a-z0-9_.-]*/g) ?? [];
+  return new Set([...cjk, ...latin]);
+}
+
+/**
+ * True when `candidate` says nothing `seen` does not already say.
+ *
+ * Asking the same question in three sessions gives three episodes that differ
+ * only in wording, and rendering all three spends three of five slots restating
+ * one fact - measured on real data: 900 of 1587 characters. Containment rather
+ * than similarity, so a longer memory that happens to include a shorter one's
+ * words is still kept when it adds something of its own.
+ */
+function saysNothingNew(candidate, seen) {
+  const tokens = meaningfulTokens(candidate);
+  if (tokens.size < 3) return false; // too short to judge; keep it
+  for (const previous of seen) {
+    let shared = 0;
+    for (const token of tokens) if (previous.has(token)) shared += 1;
+    if (shared / tokens.size >= DEDUPE_CONTAINMENT) return true;
+  }
+  return false;
+}
+
+function section(label, items, renderer, max = SECTION_MAX_ITEMS, seen) {
+  const rendered = [];
+  for (const item of items ?? []) {
+    if (rendered.length >= max) break;
+    const text = renderer(item, seen);
+    if (!text) continue;
+    // Compare on the item's own first line: the sub-lines are already deduped
+    // against the whole block by renderEpisode.
+    const head = text.split("\n")[0];
+    if (saysNothingNew(head, seen)) continue;
+    seen.push(meaningfulTokens(head));
+    rendered.push(text);
+  }
   return rendered.length ? { lines: [`${label}:`, ...rendered], count: rendered.length } : { lines: [], count: 0 };
 }
 
@@ -139,10 +192,13 @@ function trimToBudget(lines) {
 }
 
 export function render(userData, agentData) {
-  const profile = section("Developer profile", userData?.profiles, renderProfile, 1);
-  const episodes = section("Relevant past episodes", userData?.episodes, renderEpisode);
-  const cases = section("Relevant cases", agentData?.agent_cases, renderCase);
-  const skills = section("Relevant skills", agentData?.agent_skills, renderSkill);
+  // One running record of what the block has already said, shared by every
+  // section: a fact repeated under an episode and again as a case is one fact.
+  const seen = [];
+  const profile = section("Developer profile", userData?.profiles, renderProfile, 1, seen);
+  const episodes = section("Relevant past episodes", userData?.episodes, renderEpisode, SECTION_MAX_ITEMS, seen);
+  const cases = section("Relevant cases", agentData?.agent_cases, renderCase, SECTION_MAX_ITEMS, seen);
+  const skills = section("Relevant skills", agentData?.agent_skills, renderSkill, SECTION_MAX_ITEMS, seen);
 
   const body = trimToBudget([...profile.lines, ...episodes.lines, ...cases.lines, ...skills.lines]);
   if (body.length === 0) return null;
