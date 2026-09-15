@@ -6,6 +6,7 @@ import {
   TRANSCRIPT_READ_DELAY_MS,
 } from "./constants.js";
 import { stripInjectedMemory } from "./render.js";
+import { stripHostWrappers } from "./query.js";
 
 export function parseTranscript(text) {
   const entries = [];
@@ -159,7 +160,11 @@ export function toEverosMessages(entries, { userId, agentId }) {
       // from the IDE). Anything else here is a skill injection, slash-command
       // scaffolding or a caveat preamble - noise the user never wrote.
       if (!entry.promptSource) continue;
-      const text = stripInjectedMemory(textOf(blocks));
+      // promptSource is NOT "the user typed this": the host sets it on its own
+      // wrappers too (task notifications, IDE file events). Measured on 12 real
+      // transcripts, 412 of 1636 such entries - 25% - were pure host wrapper,
+      // the largest 40 KB, all of it posted as if the user had said it.
+      const text = stripInjectedMemory(stripHostWrappers(textOf(blocks))).trim();
       if (!text) continue;
       closeAssistant();
       messages.push({ sender_id: userId, role: "user", timestamp: ts, content: text });

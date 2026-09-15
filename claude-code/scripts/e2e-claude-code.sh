@@ -98,7 +98,10 @@ tmux has-session -t everos-e2e 2>/dev/null && { printf '  a previous run left tm
 # A run killed with SIGKILL never reaches its trap, and what it leaves behind is
 # a copy of real api keys in a world-readable temp directory. Sweep those here:
 # by the time anyone runs this again, any earlier run is long dead.
-STALE=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'everos-cc-e2e*' ! -path "$WORK" 2>/dev/null)
+# `! -path "$ALIVE"` is load-bearing: the watchdog flag is named everos-cc-e2e.$$.running
+# and would otherwise be swept by this very line, disarming the hard lifetime cap
+# that the sweep exists to make unnecessary.
+STALE=$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'everos-cc-e2e*' ! -path "$WORK" ! -path "$ALIVE" 2>/dev/null)
 if [ -n "$STALE" ]; then
   printf '%s\n' "$STALE" | while read -r leftover; do
     [ -n "$leftover" ] && command rm -rf "$leftover"
@@ -114,9 +117,12 @@ command cp "$SOURCE_CONFIG" "$ROOT/everos.toml"
 # llm section when asked, so a run is never at the mercy of whatever the source
 # config happened to hold.
 if [ -n "${E2E_LLM_API_KEY:-}" ]; then
-  python3 - "$ROOT/everos.toml" "${E2E_LLM_MODEL:-deepseek-chat}" "$E2E_LLM_API_KEY" "${E2E_LLM_BASE_URL:-https://api.deepseek.com}" <<'PY'
-import sys, io, re
-path, model, key, base = sys.argv[1:5]
+  # The key goes through the environment, not argv: `ps -axww` shows every
+  # process's full argv to any user on this machine.
+  E2E_KEY="$E2E_LLM_API_KEY" python3 - "$ROOT/everos.toml" "${E2E_LLM_MODEL:-deepseek-chat}" "${E2E_LLM_BASE_URL:-https://api.deepseek.com}" <<'PY'
+import sys, io, re, os
+path, model, base = sys.argv[1:4]
+key = os.environ["E2E_KEY"]
 out, cur = [], None
 for line in io.open(path).read().splitlines():
     m = re.match(r'^\[([^\]]+)\]', line)

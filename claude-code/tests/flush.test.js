@@ -121,3 +121,20 @@ test("a missing session id posts nothing", async () => {
     assert.equal(server.only("/api/v2/memory/flush").length, 0);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("a request that never left is not recorded as sealed", async () => {
+  // Same TIMEOUT, two different realities: on loopback it means the request was
+  // written and the answer is slow; off-box a dropped SYN (VPN down, firewall
+  // DROP, host asleep) aborts identically having sent nothing. Marking the
+  // second one sealed hides the session from the sweep forever - the very
+  // failure the seal ordering was introduced to fix, returning through the
+  // error classifier. 192.0.2.1 is TEST-NET-1: packets go nowhere.
+  const dir = tmp();
+  try {
+    await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", hook_event_name: "SessionEnd" }, {
+      EVEROS_CC_BASE_URL: "http://192.0.2.1:9999", EVEROS_CC_DATA_DIR: dir,
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.equal(readState(dir, "s1").flushed, false, "nothing was sent, so the sweep must still have it");
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

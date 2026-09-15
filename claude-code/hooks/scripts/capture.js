@@ -78,6 +78,9 @@ runHook("Stop", async (input, ctx) => {
   }
 
   markStored(config.dataDir, sessionId, promptId, identity.projectId);
-  debug(`stored ${messages.length} messages for ${promptId}`);
-  return config.verbose ? { systemMessage: `💾 EverOS: saved ${messages.length} messages` } : undefined;
+  // `committed`, not `messages.length`: a partial capture drops the tail, and
+  // telling the user we saved more than we did is the one thing a memory tool
+  // must never do.
+  debug(`stored ${committed} of ${messages.length} messages for ${promptId}`);
+  return config.verbose ? { systemMessage: `💾 EverOS: saved ${committed} messages` } : undefined;
 });

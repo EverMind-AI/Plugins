@@ -18,7 +18,7 @@ const SWEEP_MAX_SESSIONS = 5;
 /**
  * One budget for the whole sweep, not one per session. `/flush` runs real
  * boundary detection, so a few seconds each is normal, and five sequential
- * flushes at the 10s per-call deadline would be 50s against a 15s hook timeout.
+ * flushes at the old 10s per-call deadline would have been 50s against a 15s hook timeout.
  */
 const SWEEP_BUDGET_MS = 6000;
 

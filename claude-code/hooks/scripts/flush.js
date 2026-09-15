@@ -3,6 +3,7 @@ import { runHook } from "./lib/hook-io.js";
 import { resolveIdentity, sanitizeId } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { markFlushed, pruneState } from "./lib/state.js";
+import { isLoopback } from "./lib/config.js";
 import { FLUSH_DISPATCH_MS } from "./lib/constants.js";
 
 // Registered for both SessionEnd and PreCompact. Sealing twice is harmless:
@@ -37,8 +38,13 @@ runHook("SessionEnd", async (input, ctx) => {
     markFlushed(config.dataDir, sessionId);
     debug(`${event}: flush ${data?.status ?? "ok"}`);
   } catch (error) {
-    if (error.code === "TIMEOUT") {
-      // The socket was open, so EverOS has the request and finishes on its own.
+    if (error.code === "TIMEOUT" && isLoopback(config.baseUrl)) {
+      // On loopback the connect is instantaneous, so running out of time means
+      // the request was written and EverOS finishes it without us. Off-box that
+      // inference is false: a dropped SYN (VPN down, firewall DROP, host asleep)
+      // aborts with the same TIMEOUT having sent nothing, and marking it sealed
+      // would hide the session from the sweep forever - the very failure this
+      // ordering was introduced to fix, coming back through the error classifier.
       markFlushed(config.dataDir, sessionId);
       debug(`${event}: flush dispatched, not awaited`);
     } else {

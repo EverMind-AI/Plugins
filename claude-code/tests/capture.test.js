@@ -13,8 +13,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(here, "fixtures", "transcript-basic.jsonl");
 
 function tmp() { return fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-capture-")); }
-function envFor(server, dir) {
-  return { EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir, EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj" };
+function envFor(server, dir, extra = {}) {
+  return { EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir, EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj", ...extra };
 }
 const stdin = { session_id: "s1", prompt_id: "prompt-A", transcript_path: FIXTURE, cwd: "/w", hook_event_name: "Stop" };
 
@@ -77,9 +77,14 @@ test("a batch that fails after an earlier one succeeded is not re-sent whole", a
   try {
     let calls = 0;
     server.setAddHandler(() => { calls += 1; return calls === 1 ? "ok" : "fail"; });
-    await runHookScript(SCRIPT, { session_id: "s1", prompt_id: "p", transcript_path: big, cwd: "/w" }, envFor(server, dir));
+    const { json } = await runHookScript(SCRIPT, { session_id: "s1", prompt_id: "p", transcript_path: big, cwd: "/w" },
+      envFor(server, dir, { EVEROS_CC_VERBOSE: "1" }));
     assert.equal(server.only("/api/v2/memory/add").length, 2, "both batches attempted");
     assert.equal(isStored(readState(dir, "s1"), "p"), true, "must not offer the committed batch for a retry");
+    // What the user is told must be what actually landed. Reporting the total
+    // after a truncated tail is the one lie a memory tool cannot afford.
+    const sent = server.only("/api/v2/memory/add")[0].body.messages.length;
+    assert.equal(json.systemMessage, `💾 EverOS: saved ${sent} messages`);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

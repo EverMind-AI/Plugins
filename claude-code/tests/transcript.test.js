@@ -244,3 +244,21 @@ test("readTurn gives up on an incomplete turn instead of blocking forever", asyn
 test("readTurn returns an empty array for a missing file rather than throwing", async () => {
   assert.deepEqual(await readTurn("/nonexistent/path.jsonl", "p", { attempts: 1, delayMs: 1 }), []);
 });
+
+test("a host wrapper that carries promptSource is not captured as the user's words", () => {
+  // promptSource is not "the user typed this" - the host sets it on task
+  // notifications and IDE file events too. 25% of such entries in real
+  // transcripts were pure wrapper, the largest 40 KB.
+  const id = { userId: "u", agentId: "a", appId: "claude-code", projectId: "p" };
+  const user = (text) => ({ type: "user", timestamp: "2026-09-15T10:00:00.000Z", promptId: "p1",
+    promptSource: "typed", message: { role: "user", content: [{ type: "text", text }] } });
+  const assistant = { type: "assistant", timestamp: "2026-09-15T10:00:01.000Z", promptId: "p1",
+    message: { role: "assistant", content: [{ type: "text", text: "ok" }] } };
+
+  const pure = toEverosMessages([user("<task-notification>\n<task-id>x</task-id>\n</task-notification>"), assistant], id);
+  assert.deepEqual(pure.map((m) => m.role), ["assistant"], "a pure wrapper must not become a user message");
+
+  const mixed = toEverosMessages([user("<ide_opened_file>a.ts</ide_opened_file>\nwhy does this fail?"), assistant], id);
+  assert.equal(mixed[0].role, "user");
+  assert.equal(mixed[0].content, "why does this fail?", "the wrapper goes, the user's own words stay");
+});

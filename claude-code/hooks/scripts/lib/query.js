@@ -5,6 +5,9 @@ const NOISE_TAGS = [
   "system-reminder", "ide_selection", "command-name", "command-message",
   "command-args", "local-command-stdout", "local-command-caveat",
   "everos_memory", "attachment", "function_results", "tool_result",
+  // The host wraps these in a user entry that carries promptSource, so they
+  // look exactly like something the user typed.
+  "task-notification", "ide_opened_file",
 ];
 const PAIRED_NOISE = new RegExp(`<(${NOISE_TAGS.join("|")})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, "gi");
 const STRAY_NOISE = new RegExp(`<\\/?(${NOISE_TAGS.join("|")})\\b[^>]*>`, "gi");
@@ -23,10 +26,14 @@ export function countTokens(s) {
   return cjk + latin;
 }
 
+/** Only the host's wrappers. Capture reuses this; it must not touch the user's
+ *  own code fences, which the query path folds away but memory keeps. */
+export function stripHostWrappers(s) {
+  return String(s ?? "").replace(PAIRED_NOISE, "").replace(STRAY_NOISE, "");
+}
+
 export function stripNoise(s) {
-  return String(s ?? "")
-    .replace(PAIRED_NOISE, "")
-    .replace(STRAY_NOISE, "")
+  return stripHostWrappers(s)
     .replace(FENCED_CODE, "[code]")
     .replace(LONG_RUN, "[…]")
     .replace(/\n{3,}/g, "\n\n")

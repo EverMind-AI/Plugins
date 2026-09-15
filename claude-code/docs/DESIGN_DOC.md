@@ -65,7 +65,7 @@ install documentation is written for the checkout case first.
 | D10 | Seal points | `SessionEnd` and `PreCompact`; no periodic flush | Periodic flush would fight EverOS's own topic-boundary detection. Compaction is a natural boundary. |
 | D11 | Turn dedupe | `prompt_id` from hook stdin, state under `${CLAUDE_PLUGIN_DATA}` | `Stop` can fire twice for one prompt (interrupt, resume). EverOS's buffer does not dedupe. |
 | D13 | Cold first recall | **Tried a SessionStart warm-up search, then removed it** | Two of the first three live sessions lost their opening recall, and a warm-up was added at the same time as the budget rise — two changes, one outcome, no attribution. Measured afterwards on a server that had never served a search: first 2.2 s, steady state 0.4-0.9 s. A 1.5 s saving that the 5 s budget already absorbs does not pay for a per-session embedding call and up to 5 s of SessionStart. D8 is what fixed it. |
-| D14 | Unsealed sessions | Record the seal only once the request is known to have left — on the answer, or on the 1.5 s dispatch deadline, which means the socket was open. A later session re-seals anything left unsealed that has sat untouched for 30 minutes | Measured, not assumed: the host kills a session-end hook within a few hundred milliseconds, in an interactive terminal exactly as under `claude -p`. This was first written the other way round, marking the seal up front to stop the sweep re-flushing sessions for nothing — but a full e2e run's server log showed the `/exit` flush had never reached EverOS at all, while the mark made `pendingFlushes` skip that session forever. The cost being avoided is not real: a repeat flush answers `no_extraction` in 3 ms against a live 1.3.1. Unsealed is the recoverable direction, so the seal now follows the request. |
+| D14 | Unsealed sessions | Record the seal only once the request is known to have left — on the answer, or on the 1.5 s dispatch deadline, which means the socket was open. A later session re-seals anything left unsealed that has captured at least one turn and has sat untouched for 30 minutes | Measured, not assumed: the host kills a session-end hook within a few hundred milliseconds, in an interactive terminal exactly as under `claude -p`. This was first written the other way round, marking the seal up front to stop the sweep re-flushing sessions for nothing — but a full e2e run's server log showed the `/exit` flush had never reached EverOS at all, while the mark made `pendingFlushes` skip that session forever. The cost being avoided is not real: a repeat flush answers `no_extraction` in 3 ms against a live 1.3.1. Unsealed is the recoverable direction, so the seal now follows the request. |
 | D15 | Case rendering | Inject `task_intent` + `key_insight`, not `approach`; cap every rendered line at 300 chars | A real case's `approach` is a numbered walkthrough over 1500 characters. At prompt time the distilled lesson helps; `/everos:search` is where the detail belongs. |
 | D12 | Prompt-injection story | Port OpenClaw `render` verbatim | Fenced `<everos_memory>` block, "untrusted historical data" label, fence-token neutralisation, position-0 strip before capture. Do not reinvent. |
 
@@ -291,7 +291,7 @@ instance serves both.
 4. Map to EverOS messages (§7). Drop the turn if it yields no message.
 5. `POST /add` in batches of ≤ 500 messages, sequentially. Response `status`
    is ignored beyond success (`accumulated` and `extracted` are both fine).
-6. Record `prompt_id` in the state file only after every batch succeeded, so
+6. Record `prompt_id` in the state file once **at least one** batch succeeded, so
    a failed turn is retried by the next `Stop` for the same prompt if the
    host re-fires it. A dropped turn is otherwise lost — no queue (same as
    OpenClaw).
@@ -326,7 +326,7 @@ top-level entries. User entries additionally carry `promptId`.
 | `timestamp` | ISO → Unix ms; missing ⇒ previous + 1 |
 
 A `tool` message whose `tool_call_id` matches no `tool_calls.id` earlier in
-the same turn is dropped (EverOS rejects orphans). A single `tool_result`
+the same turn is dropped (**not** an EverOS requirement — verified against a live 1.3.1: an orphan with a non-null `tool_call_id` is accepted and extracts fine; the reason is that everalgo would get a ToolCallResult whose request it never saw). A single `tool_result`
 longer than 20 000 characters is truncated head 70 % / tail 30 % with a
 `[... trimmed N chars ...]` marker; this is a payload-size guard only — the
 real trimming is everalgo's.
@@ -356,7 +356,7 @@ so enabling the plugin asks two questions, both answerable with Enter.
 
 Non-configurable constants: `APP_ID = "claude-code"`, `AGENT_ID =
 "claude-code"`, health probe 2 s, start wait 5 s, capture 20 s,
-flush 10 s, sweep budget 6 s, abandoned-session threshold 30 min, transcript
+flush dispatch 1.5 s, sweep budget 6 s, abandoned-session threshold 30 min, transcript
 read 10 x 200 ms, 5 items per rendered section, 3 atomic facts per episode,
 300 chars per rendered line, 8000 chars per block, id clip 128, `/add` batch
 500, tool-result guard 20 000 chars, query clip 500 chars, 200 remembered
@@ -369,7 +369,7 @@ prompt ids, 30-day state TTL.
   ABI and carries only the documented JSON.
 - Network errors, non-2xx, non-JSON bodies ⇒ swallowed per call. Recall
   tracks fail independently.
-- Deadlines are enforced inside the script (5 s recall, 20 s capture, 10 s
+- Deadlines are enforced inside the script (5 s recall, 20 s capture, 1.5 s
   flush, 6 s for the whole abandoned-session sweep) and are always shorter than the `hooks.json` timeout so the
   host never kills us mid-write.
 - No retries in v1. Rationale (OpenClaw handoff): a 5xx on `/add` may have

@@ -52,7 +52,14 @@ const BLOCK_MAX_CHARS = 8000;
  * once its newlines are squeezed out is caught too.
  */
 export function neutralizeFenceTokens(s) {
-  return String(s ?? "").replace(/<\s*(\/?)\s*([A-Za-z][\w:.-]*)\s*>/g, "[$1$2]");
+  return String(s ?? "")
+    // Closing tags first, attributes and a self-closing slash included: the
+    // narrow rule below wants `>` right after the name, so `</system-reminder/>`
+    // and `</system-reminder x>` used to walk straight through and close the
+    // host's own fence. Scoped to closing tags on purpose - a broad rule here
+    // would eat `a < b and c > d`.
+    .replace(/<\s*\/\s*([A-Za-z][\w:.-]*)[^<>]*>/g, "[/$1]")
+    .replace(/<\s*(\/?)\s*([A-Za-z][\w:.-]*)\s*>/g, "[$1$2]");
 }
 
 function oneLine(s, max = ITEM_MAX_CHARS) {
