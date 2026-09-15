@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startFakeEveros } from "./helpers/fake-everos.js";
 import { runHookScript } from "./helpers/run-hook.js";
+import { readState } from "../hooks/scripts/lib/state.js";
 
 const SCRIPT = "hooks/scripts/recall.js";
 
@@ -116,5 +117,40 @@ test("one failing track still injects the other", async () => {
     const { json } = await runHookScript(SCRIPT, { prompt: "how do we lint this repo", session_id: "s1", cwd: "/w" }, envFor(server, dir));
     assert.ok(json.hookSpecificOutput.additionalContext.includes("run-lint"));
     assert.equal(json.systemMessage, "🧠 EverOS: 1 skill");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("memory still works when the state directory cannot be written", async () => {
+  // Found by running recall against a chmod 0500 dataDir: touchSession threw,
+  // the hook exited 0 with empty stdout, no search was ever sent, and nothing
+  // anywhere said memory had stopped working. A dataDir under a regular file
+  // reproduces it for any user, root included.
+  const server = await startFakeEveros({ searchFn: () => hit });
+  const blocked = path.join(tmpHome(), "a-file");
+  fs.writeFileSync(blocked, "not a directory");
+  try {
+    const { code, stdout } = await runHookScript(
+      SCRIPT,
+      { session_id: "s1", cwd: "/w", prompt: "which linter does this project use" },
+      envFor(server, path.join(blocked, "everos")),
+    );
+    assert.equal(code, 0);
+    assert.equal(server.only("/api/v2/memory/search").length, 2, "both tracks still searched");
+    assert.match(stdout, /ruff/, "and the memory still reached the prompt");
+  } finally { await server.close(); fs.rmSync(blocked, { force: true }); }
+});
+
+test("a prompt too short to recall still counts as proof of life", async () => {
+  // The sweep tells an abandoned session from a live one by this file's mtime.
+  // "ok" and "continue" are not worth a search, and they are just as much proof
+  // that somebody is still sitting there - skipping the touch let the next
+  // session force a topic boundary into the middle of a live one.
+  const server = await startFakeEveros({ searchFn: () => hit });
+  const dir = tmpHome();
+  try {
+    const { code } = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", prompt: "ok" }, envFor(server, dir));
+    assert.equal(code, 0);
+    assert.equal(server.only("/api/v2/memory/search").length, 0, "still no search for a prompt this short");
+    assert.equal(readState(dir, "s1").sessionId, "s1", "but the session was marked alive");
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

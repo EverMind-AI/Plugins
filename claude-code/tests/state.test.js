@@ -172,3 +172,19 @@ test("pruneState deletes files older than the ttl and keeps fresh ones", () => {
   assert.equal(fs.existsSync(statePath(dir, "new")), true);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("a state directory that cannot be written degrades instead of throwing", () => {
+  // A dataDir under a regular file: mkdir fails with ENOTDIR for any user,
+  // including root, so this pins the same thing on CI as it does here.
+  const blocked = path.join(tmp(), "a-file");
+  fs.writeFileSync(blocked, "not a directory");
+  const dataDir = path.join(blocked, "everos");
+  // State is a cache for dedupe and liveness, never the memory itself. These
+  // used to throw out of the hook, and recall - which touches the session
+  // BEFORE it searches - injected nothing at all, with no error anywhere.
+  assert.doesNotThrow(() => markStored(dataDir, "s1", "p1", "proj"));
+  assert.doesNotThrow(() => markFlushed(dataDir, "s1"));
+  assert.doesNotThrow(() => claimWarning(dataDir, "s1"));
+  assert.deepEqual(readState(dataDir, "s1").promptIds, [], "nothing was persisted, and that is the deal");
+  fs.rmSync(blocked, { force: true });
+});

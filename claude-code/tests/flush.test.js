@@ -69,20 +69,26 @@ test("a seal is recorded before the answer, because the host kills the hook firs
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("the seal is recorded even when the hook is killed before the request returns", async () => {
-  // Measured in a real interactive session: the host kills the SessionEnd hook
-  // within a few hundred milliseconds, well before any deadline of ours fires,
-  // yet the POST has already left and EverOS finishes the extraction. Marking
-  // only after an answer therefore never happened, and the sweep re-flushed
-  // every session half an hour later for nothing.
+test("a hook killed before the request leaves stays unsealed, so the sweep still has it", async () => {
+  // The host kills a SessionEnd hook within a few hundred milliseconds. This
+  // used to be marked sealed up front, which made `pendingFlushes` skip the
+  // session forever - and a real e2e run's server log showed no flush had
+  // reached EverOS at all, so nothing ever sealed it. Unsealed is the
+  // recoverable direction: a repeat flush answers "no_extraction" in 3ms
+  // (measured against a live 1.3.1), so the sweep costs nothing when it is
+  // wrong and saves the session when it is right.
   const server = await startFakeEveros({ flushDelayMs: 30000 });
   const dir = tmp();
   try {
     const child = runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", hook_event_name: "SessionEnd" }, envFor(server, dir));
-    // Do not wait for the hook: inspect the state while the request is in flight.
+    // Do not wait for the hook: inspect the state while the request is in flight,
+    // which is where a killed hook leaves it.
     await new Promise((r) => setTimeout(r, 900));
-    assert.equal(readState(dir, "s1").flushed, true, "marked before the answer, like a killed hook would leave it");
+    assert.equal(readState(dir, "s1").flushed, false, "nothing the sweep would skip yet");
     await child;
+    // The dispatch deadline fired, which means the socket was open and EverOS
+    // has the request - that is what the mark is for.
+    assert.equal(readState(dir, "s1").flushed, true, "sealed once the request is known to have left");
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

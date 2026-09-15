@@ -38,12 +38,22 @@ export function readState(dataDir, sessionId) {
  */
 function writeState(dataDir, sessionId, state) {
   const file = statePath(dataDir, sessionId);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
-  // writeFileSync only applies mode when creating; enforce it either way.
-  fs.chmodSync(temp, 0o600);
-  fs.renameSync(temp, file);
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+    // writeFileSync only applies mode when creating; enforce it either way.
+    fs.chmodSync(temp, 0o600);
+    fs.renameSync(temp, file);
+  } catch {
+    // This directory is a cache for dedupe and liveness, never the memory
+    // itself. An unwritable one (read-only home, a full disk, a dataDir left
+    // owned by root) used to throw out of touchSession - which recall calls
+    // before it searches - and the hook exited 0 with nothing injected:
+    // memory silently gone, no error anywhere. Degrade instead. What is lost
+    // is dedupe (a re-fired Stop may store a turn twice) and the liveness
+    // mtime. `/everos:status` probes this directory and says so.
+  }
 }
 
 /**
@@ -82,9 +92,9 @@ export function markStored(dataDir, sessionId, promptId, projectId = null) {
   });
 }
 
-export function markFlushed(dataDir, sessionId, flushed = true) {
+export function markFlushed(dataDir, sessionId) {
   const state = readState(dataDir, sessionId);
-  writeState(dataDir, sessionId, { ...state, sessionId, flushed });
+  writeState(dataDir, sessionId, { ...state, sessionId, flushed: true });
 }
 
 /**

@@ -81,9 +81,11 @@ test("a live session that is mid-turn is not sealed underneath it", async () => 
 });
 
 test("the whole sweep shares one budget so it cannot outrun the hook timeout", async () => {
-  // Five sessions x a 10s flush deadline, run one after another, would be 50s
-  // against a 15s hook timeout.
-  const server = await startFakeEveros({ flushDelayMs: 1500 });
+  // Five sessions x 1.8s against a 6s shared budget: three get through and the
+  // rest are left for next time. Asserting the flush COUNT is what makes this
+  // test bite - wall-clock alone would be 9s either way, comfortably inside the
+  // 15s timeout, so a per-call deadline would sail past an elapsed-time check.
+  const server = await startFakeEveros({ flushDelayMs: 1800 });
   const dir = tmp();
   try {
     const stale = new Date(Date.now() - 30 * 60 * 1000);
@@ -98,6 +100,8 @@ test("the whole sweep shares one budget so it cannot outrun the hook timeout", a
     });
     const elapsed = Date.now() - started;
     assert.equal(code, 0);
+    const sealed = server.only("/api/v2/memory/flush").length;
+    assert.ok(sealed < 5, `all ${sealed} sessions flushed, so nothing shared a budget`);
     assert.ok(elapsed < 14000, `sweep took ${elapsed}ms, must stay inside the 15s hook timeout`);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

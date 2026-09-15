@@ -37,11 +37,16 @@ note() { printf '        %s\n' "$1"; }
 
 teardown() {
   local rc=$?
+  # First, before anything that can be raced: disarm the watchdog. See the flag's
+  # definition for why killing its processes is not enough.
+  command rm -f "$ALIVE" 2>/dev/null
   printf '\n--- tearing down ---\n'
   tmux kill-session -t everos-e2e 2>/dev/null || true
   [ -n "$SERVER_PID" ] && kill -9 "$SERVER_PID" 2>/dev/null && printf '  stopped EverOS (%s)\n' "$SERVER_PID"
-  # Kill the whole watchdog subshell AND the sleep it is blocked in: killing
-  # only the subshell orphans the sleep, which then survives to the cap.
+  # Both, and the sleep first: once the subshell is gone the sleep is reparented
+  # to init and -P no longer matches it, so it would run on until the cap. The
+  # subshell falling through to its next statement is harmless now - the flag it
+  # checks there is already gone.
   if [ -n "$WATCHDOG_PID" ]; then
     pkill -9 -P "$WATCHDOG_PID" 2>/dev/null || true
     kill -9 "$WATCHDOG_PID" 2>/dev/null || true
@@ -61,11 +66,18 @@ trap teardown EXIT INT TERM
 # must not outlive the run. Checked rather than assumed.
 command -v timeout >/dev/null 2>&1 && note "note: timeout(1) exists here after all"
 SELF=$$
+# The flag, not the process, is what arms this. Killing the sleep the watchdog is
+# blocked in does NOT call it off - the subshell simply falls through to its next
+# statement, which is the kill -9 of this script. A fully green run then died
+# mid-teardown and exited 137, leaving the isolated root - which holds copied api
+# keys - on disk. Teardown removes the flag before it touches anything, so the
+# order it kills things in stops mattering.
+ALIVE="${TMPDIR:-/tmp}/everos-cc-e2e.$$.running"
+: > "$ALIVE"
 # stdio detached on purpose: a child that keeps the inherited stdout open holds
 # a pipeline (./e2e... | tail) alive for the whole cap even after this script
-# has exited, which looks exactly like a hung run. setsid so it also survives
-# being in the same process group without dragging the group down with it.
-( sleep "${E2E_MAX_SECONDS:-1800}"; kill -9 $SELF 2>/dev/null ) >/dev/null 2>&1 </dev/null &
+# has exited, which looks exactly like a hung run.
+( sleep "${E2E_MAX_SECONDS:-1800}"; [ -e "$ALIVE" ] && kill -9 $SELF 2>/dev/null ) >/dev/null 2>&1 </dev/null &
 WATCHDOG_PID=$!
 
 # ── preflight ────────────────────────────────────────────────────────────────
@@ -218,6 +230,15 @@ md_under() { find "$ROOT/claude-code/$1" -name '*.md' 2>/dev/null; }
 # The index is eventually consistent by design, so a case that queries once and
 # fails is testing the clock, not the plugin. Waiting on the queue alone is not
 # enough either - a later session can refill it - so this waits on the fact.
+wait_md() { # project_id[/subdir] [attempts] - extraction writes markdown, then indexes it
+  local attempts="${2:-15}"
+  for _ in $(seq 1 "$attempts"); do
+    [ -n "$(md_under "$1")" ] && return 0
+    sleep 4
+  done
+  return 1
+}
+
 wait_indexed() { # user_id project_id needle [attempts]
   local attempts="${4:-15}"
   for _ in $(seq 1 "$attempts"); do
@@ -303,7 +324,10 @@ D1="$WORK/d1"
 ask "$REPO_A" "$D1" "Remember: this repository's canary branch is sparrow-7. Confirm in one sentence, no tools." > "$WORK/c1a.txt" 2>&1
 grep -q "sparrow-7" "$WORK/c1a.txt" && note "session 1 replied about sparrow-7" || note "session 1 said: $(tail -1 "$WORK/c1a.txt" | cut -c1-70)"
 settle
-if [ -n "$(md_under github.com_e2e_alpha)" ]; then
+# Both of these wait on the same event - extraction finishing - so both have to
+# poll. A fixed sleep here used to fail the disk check while the search below,
+# which polls for a minute, passed on the very same extraction.
+if wait_md github.com_e2e_alpha; then
   ok "markdown written under github.com_e2e_alpha"
   md_under github.com_e2e_alpha | sed "s|$ROOT/|        |"
 else
@@ -427,7 +451,7 @@ settle 30
 # scripts/e2e.sh, which feeds a two-turn trajectory with a failed tool and a
 # correction and requires the case file to appear. Here it is reported with the
 # algorithm's own reason, so a quality filter firing never reads as a defect.
-if [ -n "$(md_under github.com_e2e_gamma/agents)" ]; then
+if wait_md github.com_e2e_gamma/agents 8; then
   ok "an agent case came out of it too"
   md_under github.com_e2e_gamma/agents | sed "s|$ROOT/|        |"
 else
@@ -598,6 +622,9 @@ PY
     && ok "and it is visible on screen" || note "not on the visible pane at capture time (cosmetic, the transcript is authoritative)"
   tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -q "UserPromptSubmit says" \
     && ok "the recall line is visible in the UI" || note "no visible recall line (only shown when there are hits)"
+  # Count what the SERVER saw, so the seal below is checked against EverOS and
+  # not against the plugin's own bookkeeping.
+  FLUSHES_BEFORE=$(grep -c "POST /api/v2/memory/flush" "$WORK/everos.log" 2>/dev/null || echo 0)
   tmux send-keys -t everos-e2e "/exit"; sleep 2; tmux send-keys -t everos-e2e Enter
   for _ in $(seq 1 25); do tmux has-session -t everos-e2e 2>/dev/null || break; sleep 1; done
   sleep 2
@@ -612,15 +639,26 @@ PY
     *UserPromptSubmit*) : ;;
     *) note "UserPromptSubmit is silent when it finds something, which it did" ;;
   esac
-  # SessionEnd is expected to be missing: the host kills it within a few hundred
-  # milliseconds. The seal still lands because the request leaves first, which
-  # the state file records.
+  # SessionEnd is expected to be missing from the log: the host kills it within a
+  # few hundred milliseconds. What matters is that the state file and the server
+  # agree. `flushed: true` is what makes the sweep skip a session, so claiming it
+  # without EverOS having received anything means nothing ever seals that
+  # session - which is exactly what an earlier optimistic mark did here, while
+  # this check passed on the plugin's own bookkeeping.
+  FLUSHES_AFTER=$(grep -c "POST /api/v2/memory/flush" "$WORK/everos.log" 2>/dev/null || echo 0)
   SEALED8=$(python3 -c "
 import glob,json
 for f in glob.glob('$D8/state/*.json'):
     print(json.load(open(f)).get('flushed'))" 2>/dev/null | head -1)
-  [ "$SEALED8" = "True" ] && ok "the seal is recorded even though the host cut the hook short" \
-    || bad "case 8: session not recorded as sealed (flushed=$SEALED8)"
+  if [ "$FLUSHES_AFTER" -gt "$FLUSHES_BEFORE" ]; then
+    [ "$SEALED8" = "True" ] && ok "/exit got a flush to EverOS, and the session is recorded as sealed" \
+      || bad "case 8: EverOS received the flush but the session is not recorded as sealed (flushed=$SEALED8)"
+  else
+    note "the host killed SessionEnd before the flush left (0 new flushes server-side)"
+    [ "$SEALED8" = "True" ] \
+      && bad "case 8: sealed=true with no flush at EverOS - the sweep will now skip a session nothing ever sealed" \
+      || ok "left unsealed, so the next session's sweep still has it"
+  fi
 fi
 fi
 

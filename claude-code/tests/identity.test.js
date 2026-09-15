@@ -10,8 +10,7 @@ function runnerFor(map) {
 
 test("sanitizeId keeps the path-safe charset and replaces the rest", () => {
   assert.equal(sanitizeId("EverOS", "default"), "EverOS");
-  assert.equal(sanitizeId("my repo/name", "default"), "my_repo_name");
-  assert.equal(sanitizeId("项目", "default"), "__");
+  assert.match(sanitizeId("my repo/name", "default"), /^my_repo_name_[0-9a-f]{8}$/);
   assert.equal(sanitizeId("a.b@c+d-e_f", "default"), "a.b@c+d-e_f");
 });
 
@@ -86,4 +85,25 @@ test("resolveIdentity returns the four ids the wire needs", () => {
 test("a missing userId is reported as null so the caller can disable the user track", () => {
   const id = resolveIdentity("/Users/me/scratch", { ...cfg, userId: null }, runnerFor({}));
   assert.equal(id.userId, null);
+});
+
+test("names that sanitize to the same thing still get their own partition", () => {
+  // Every name outside the whitelist collapses to a run of underscores. Three
+  // unrelated Chinese-named repositories used to land on "__" together and read
+  // each other's memory back into their prompts.
+  const ids = ["项目", "测试", "笔记"].map((n) => sanitizeId(n, "default"));
+  assert.equal(new Set(ids).size, 3, `collided: ${ids.join(" ")}`);
+  for (const id of ids) assert.match(id, /^[A-Za-z0-9_.@+-]+$/, "still path-safe for EverOS");
+  assert.equal(sanitizeId("项目", "default"), sanitizeId("项目", "default"), "and stable across runs");
+});
+
+test("a long name is disambiguated rather than truncated onto its neighbour", () => {
+  const prefix = "a".repeat(200);
+  assert.notEqual(sanitizeId(`${prefix}-one`, "default"), sanitizeId(`${prefix}-two`, "default"));
+});
+
+test("the host is case-folded so one repository is one partition", () => {
+  const forUrl = (url) => resolveProjectId("/w", cfg, runnerFor({ "config --get remote.origin.url": url }));
+  assert.equal(forUrl("https://GitHub.com/acme/api.git"), "github.com_acme_api");
+  assert.equal(forUrl("git@github.com:acme/api.git"), "github.com_acme_api");
 });

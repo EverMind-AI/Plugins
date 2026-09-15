@@ -65,7 +65,7 @@ install documentation is written for the checkout case first.
 | D10 | Seal points | `SessionEnd` and `PreCompact`; no periodic flush | Periodic flush would fight EverOS's own topic-boundary detection. Compaction is a natural boundary. |
 | D11 | Turn dedupe | `prompt_id` from hook stdin, state under `${CLAUDE_PLUGIN_DATA}` | `Stop` can fire twice for one prompt (interrupt, resume). EverOS's buffer does not dedupe. |
 | D13 | Cold first recall | **Tried a SessionStart warm-up search, then removed it** | Two of the first three live sessions lost their opening recall, and a warm-up was added at the same time as the budget rise — two changes, one outcome, no attribution. Measured afterwards on a server that had never served a search: first 2.2 s, steady state 0.4-0.9 s. A 1.5 s saving that the 5 s budget already absorbs does not pay for a per-session embedding call and up to 5 s of SessionStart. D8 is what fixed it. |
-| D14 | Unsealed sessions | Record the seal **before** sending it; a later session re-seals only a session whose request provably never arrived and that has sat untouched for 30 minutes | Measured, not assumed: the host kills a session-end hook within a few hundred milliseconds, in an interactive terminal exactly as under `claude -p`. The POST still leaves first (~120 ms after `/exit`) and EverOS finishes the ~5 s extraction with no client attached, so nothing is lost — only the bookkeeping was, which made the sweep re-flush every session for nothing. The sweep now covers the one real gap: EverOS being down at session end. |
+| D14 | Unsealed sessions | Record the seal only once the request is known to have left — on the answer, or on the 1.5 s dispatch deadline, which means the socket was open. A later session re-seals anything left unsealed that has sat untouched for 30 minutes | Measured, not assumed: the host kills a session-end hook within a few hundred milliseconds, in an interactive terminal exactly as under `claude -p`. This was first written the other way round, marking the seal up front to stop the sweep re-flushing sessions for nothing — but a full e2e run's server log showed the `/exit` flush had never reached EverOS at all, while the mark made `pendingFlushes` skip that session forever. The cost being avoided is not real: a repeat flush answers `no_extraction` in 3 ms against a live 1.3.1. Unsealed is the recoverable direction, so the seal now follows the request. |
 | D15 | Case rendering | Inject `task_intent` + `key_insight`, not `approach`; cap every rendered line at 300 chars | A real case's `approach` is a numbered walkthrough over 1500 characters. At prompt time the distilled lesson helps; `/everos:search` is where the detail belongs. |
 | D12 | Prompt-injection story | Port OpenClaw `render` verbatim | Fenced `<everos_memory>` block, "untrusted historical data" label, fence-token neutralisation, position-0 strip before capture. Do not reinvent. |
 
@@ -121,7 +121,7 @@ Plugins/
     ├── scripts/
     │   ├── status.js                      # used by the status skill
     │   ├── search.js                      # used by the search skill
-    │   └── e2e.sh                         # manual acceptance (§12)
+    │   └── hooks-contract.sh              # manual acceptance (§12)
     ├── tests/
     │   ├── fixtures/                      # sanitised real transcripts + hook stdin samples
     │   ├── fake-everos.js                 # in-process node:http recorder
@@ -153,7 +153,7 @@ returns nothing.
 | EverOS field | Value | Source / override |
 |---|---|---|
 | `app_id` | `claude-code` (constant) | Cross-host partition; not configurable. |
-| `project_id` | Host, owner and repository | 1. `git config --get remote.origin.url` → the last three segments joined (`github.com_EverMind-AI_Plugins`); 2. else `git rev-parse --show-toplevel` basename; 3. else `cwd` basename. Sanitised to `^[a-zA-Z0-9_.@+-]+$` (others → `_`), `.`/`..` rejected, clipped to 128, fallback `default`. Override: `EVEROS_CC_PROJECT_ID`. Resolved once per hook from stdin `cwd`. |
+| `project_id` | Host, owner and repository | 1. `git config --get remote.origin.url` → the last three segments joined (`github.com_EverMind-AI_Plugins`); 2. else `git rev-parse --show-toplevel` basename; 3. else `cwd` basename. Host lowercased (DNS is case-insensitive; owner and repository keep their case). Sanitised to `^[a-zA-Z0-9_.@+-]+$` (others → `_`), `.`/`..` rejected, clipped to 128, fallback `default`; if sanitising or clipping actually lost a character, an 8-hex digest of the original is appended (see §5). Override: `EVEROS_CC_PROJECT_ID`. Resolved once per hook from stdin `cwd`. |
 | `sender_id` (role `user`) = `user_id` | `$USER` → `$USERNAME` → `os.userInfo().username` | Override: `EVEROS_CC_USER_ID`. Unset ⇒ user track disabled with a warning (OpenClaw behaviour). |
 | `sender_id` (role `assistant`/`tool`) = `agent_id` | `claude-code` (constant) | Cases and skills land in `agents/claude-code/` under the project. |
 | `session_id` | Claude Code `session_id` from stdin, clipped to 128 | Buffer key only, not a directory. |
@@ -167,6 +167,17 @@ Host and owner are part of the id because the bare repository name is not a
 namespace. Two `api` repositories from different owners are ordinary, and
 under a bare name they would share one partition — each reading the other's
 decisions into its prompts, and a hostile clone able to write into yours.
+
+The same reasoning is why sanitising appends a digest when it loses a
+character. EverOS turns `project_id` into a directory segment, so anything
+outside the whitelist becomes `_` — and a repository named 项目 sanitised to
+`__`, as did 测试, as did every other name outside it: three unrelated
+repositories on one partition, which is the exact failure host and owner were
+added to prevent. Truncation at 128 did the same to two long names sharing a
+prefix. Ids derived from a git remote are already whitelist-clean, so the
+digest never appears on the common path. Folding the host to lowercase closes
+the other direction: one remote typed `GitHub.com` used to split a repository
+into two partitions that never saw each other.
 
 **The profile ignores this partitioning.** `recall/profile.py` fetches by
 `owner_id` alone, so EverOS returns the user's profile whatever `app_id` and
@@ -393,7 +404,7 @@ relay its output.
 | `provision.js` | Fake `start_cmd` (a node script that opens the port after N ms): started when down, not started when healthy, not started for non-loopback, 5 s cap honoured. |
 | Structure | `claude plugin validate ./claude-code` in CI. |
 
-No live-LLM test in CI. `scripts/e2e.sh` runs the acceptance below against a
+No live-LLM test in CI. `scripts/hooks-contract.sh` runs the acceptance below against a
 real EverOS and is documented in the README.
 
 ## 12. Acceptance

@@ -11,6 +11,25 @@ function pad(label) {
   return label.padEnd(14, " ");
 }
 
+/**
+ * The hooks degrade quietly when this directory cannot be written: dedupe and
+ * the abandoned-session sweep stop working while memory itself keeps going, so
+ * nothing else would ever tell you. Probe with a dot-prefixed name - the sweep
+ * reads `*.json` only, so a probe left behind by a crash is never mistaken for
+ * a session.
+ */
+function stateWritable(dataDir) {
+  const probe = path.join(dataDir, "state", `.status-probe-${process.pid}`);
+  try {
+    fs.mkdirSync(path.dirname(probe), { recursive: true });
+    fs.writeFileSync(probe, "");
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function readDebugTail(dataDir) {
   try {
     const lines = fs.readFileSync(path.join(dataDir, "debug.log"), "utf8").trim().split("\n");
@@ -66,7 +85,10 @@ out.push("Configuration (value, and which layer set it)");
 out.push(`  ${pad("base_url")} ${config.baseUrl} (${config.sources.baseUrl})`);
 out.push(`  ${pad("everos_dir")} ${config.everosDir ?? "unset"} (${config.sources.everosDir})`);
 out.push(`  ${pad("start_cmd")} ${config.startCmd.join(" ") || "unset"} (${config.sources.startCmd})`);
-out.push(`  ${pad("data_dir")} ${config.dataDir} (${config.sources.dataDir})`);
+out.push(
+  `  ${pad("data_dir")} ${config.dataDir} (${config.sources.dataDir})` +
+    (stateWritable(config.dataDir) ? "" : "\n                 ⚠️  not writable — turns may be stored twice and abandoned sessions never sealed"),
+);
 out.push(`  ${pad("verbose")} ${config.verbose}`);
 out.push(`  ${pad("debug")} ${config.debug}`);
 

@@ -68,8 +68,14 @@ test("skill injections and command scaffolding are dropped", () => {
   assert.equal(text.includes("<command-name>"), false);
 });
 
-test("thinking blocks never reach EverOS", () => {
-  assert.equal(messages().some((m) => m.content.includes("secret reasoning")), false);
+test("only text blocks become message content", () => {
+  const text = messages().map((m) => m.content).join("\n");
+  assert.equal(text.includes("secret reasoning"), false, "thinking must not reach EverOS");
+  // Real thinking blocks carry no `text` at all, so the typeof check alone would
+  // drop them and this test would pass with the type check deleted. The
+  // fixture's unknown block has a text field so the type check is the only
+  // thing left standing.
+  assert.equal(text.includes("must not leak"), false, "an unrecognised block type must not either");
 });
 
 test("consecutive assistant entries sharing a requestId merge into one message", () => {

@@ -17,27 +17,32 @@ runHook("SessionEnd", async (input, ctx) => {
   }
 
   const identity = resolveIdentity(input.cwd ?? process.cwd(), config);
-  // Recorded BEFORE the request, and undone only if it provably never arrived.
+  // Marked only once the request is known to have left: on the answer, or on the
+  // dispatch timeout, which means the socket was open and EverOS finishes with
+  // no client attached.
   //
-  // The host kills a session-end hook within a few hundred milliseconds - in an
-  // interactive terminal as much as under `claude -p` - so a mark written after
-  // the answer was never written at all, and the sweep re-flushed every session
-  // half an hour later for nothing. The POST does leave first (measured ~120ms
-  // after /exit), and EverOS finishes the extraction with no client attached.
-  markFlushed(config.dataDir, sessionId);
+  // This used to be marked BEFORE the request, to stop the sweep re-flushing
+  // every session half an hour later. That traded the wrong way round. The host
+  // kills a session-end hook within a few hundred milliseconds, usually before
+  // the POST leaves at all, and an optimistic mark makes `pendingFlushes` skip
+  // the session forever - the sweep exists for exactly the case it then cannot
+  // see. Being killed early now leaves the session unsealed, which is the
+  // recoverable direction, and the cost it was avoiding is not real: a repeat
+  // flush answers "no_extraction" in 3ms (measured against a live 1.3.1).
   try {
     const data = await createClient({ baseUrl: config.baseUrl }).flush(
       { session_id: sanitizeId(sessionId, "unknown"), app_id: identity.appId, project_id: identity.projectId },
       deadline(FLUSH_DISPATCH_MS),
     );
+    markFlushed(config.dataDir, sessionId);
     debug(`${event}: flush ${data?.status ?? "ok"}`);
   } catch (error) {
     if (error.code === "TIMEOUT") {
       // The socket was open, so EverOS has the request and finishes on its own.
+      markFlushed(config.dataDir, sessionId);
       debug(`${event}: flush dispatched, not awaited`);
     } else {
-      // It never arrived - take the mark back so a later session sweeps it up.
-      markFlushed(config.dataDir, sessionId, false);
+      // It never arrived - leave it unsealed so a later session sweeps it up.
       debug(`${event}: flush failed: ${error.message}`);
     }
   }

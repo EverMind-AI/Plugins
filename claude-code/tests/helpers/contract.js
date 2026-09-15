@@ -5,7 +5,18 @@
  * Every rule below is copied from a real source location, named in the comment,
  * rather than from memory. A field this file does not check is a dimension the
  * tests cannot see, so anything unrecognised is rejected rather than ignored.
+ *
+ * Three rules are deliberately STRICTER than EverOS, and are marked `tighter:`
+ * where they appear. They encode a plugin invariant rather than a server one -
+ * breaking them would not 422, it would silently split or mix up memory, which
+ * is worse.
  */
+
+// routes/memorize.py ContentItemDTO
+const CONTENT_TYPES = ["text", "image", "audio", "doc", "pdf", "html", "email"];
+const CONTENT_FIELDS = ["type", "text", "url", "path", "mime_type", "metadata"];
+// memory/search/dto.py SearchMethod
+const SEARCH_METHODS = ["keyword", "vector", "hybrid", "agentic", "llm_multiround"];
 
 // routes/memorize.py:41 _PATH_SAFE_CHARSET, and :43 _PATH_TRAVERSAL_TOKENS
 const PATH_SAFE = /^[a-zA-Z0-9_.@+-]+$/;
@@ -49,11 +60,26 @@ export function validateAdd(body) {
       }
       if (typeof m.content !== "string" && !Array.isArray(m.content)) {
         errors.push(`${at}.content: must be a string or a list`);
+      } else if (Array.isArray(m.content)) {
+        // routes/memorize.py ContentItemDTO: a type Literal plus extra="forbid".
+        m.content.forEach((c, j) => {
+          const where = `${at}.content[${j}]`;
+          if (!c || typeof c !== "object" || Array.isArray(c)) return errors.push(`${where}: must be an object`);
+          if (!CONTENT_TYPES.includes(c.type)) errors.push(`${where}.type: must be one of ${CONTENT_TYPES.join("|")}, got ${JSON.stringify(c.type)}`);
+          for (const key of Object.keys(c)) {
+            if (!CONTENT_FIELDS.includes(key)) errors.push(`${where}.${key}: not a ContentItemDTO field (extra="forbid")`);
+          }
+        });
+      }
+      if (m.sender_name !== undefined && m.sender_name !== null && typeof m.sender_name !== "string") {
+        errors.push(`${at}.sender_name: must be a string`);
       }
       if (m.tool_calls !== undefined && m.tool_calls !== null) {
         if (!Array.isArray(m.tool_calls)) errors.push(`${at}.tool_calls: must be a list`);
         else m.tool_calls.forEach((c, j) => {
           if (!c?.id) errors.push(`${at}.tool_calls[${j}].id: required`);
+          // tighter: ToolCallDTO.type is a plain `str = "function"` server-side.
+          // Anything else here means the plugin stopped speaking the OpenAI shape.
           if (c?.type !== "function") errors.push(`${at}.tool_calls[${j}].type: must be "function"`);
           if (typeof c?.function?.name !== "string") errors.push(`${at}.tool_calls[${j}].function.name: required`);
           // ToolCallFunctionDTO.arguments is a JSON *string*, OpenAI shape.
@@ -76,6 +102,12 @@ export function validateAdd(body) {
       }
     });
   }
+  if ("defer_extraction" in body && typeof body.defer_extraction !== "boolean") {
+    errors.push("defer_extraction: must be a boolean");
+  }
+  // tighter: MemorizeAddRequest has pydantic's default extra="ignore", so an
+  // unknown key is dropped rather than rejected. Dropped silently is how a
+  // renamed field turns into a field that never arrives.
   for (const key of Object.keys(body)) {
     if (!["session_id", "app_id", "project_id", "messages", "defer_extraction"].includes(key)) {
       errors.push(`${key}: not a MemorizeAddRequest field`);
@@ -97,11 +129,26 @@ export function validateSearch(body) {
   const hasUser = body.user_id !== undefined && body.user_id !== null;
   const hasAgent = body.agent_id !== undefined && body.agent_id !== null;
   if (hasUser === hasAgent) errors.push("exactly one of user_id / agent_id must be provided");
+  // tighter: SearchRequest declares these as plain strings - only /add enforces
+  // the path-safe charset. An id that is legal here but not on /add would search
+  // a partition nothing was ever written to, and return empty forever.
   if (hasUser) pathSafeId(body.user_id, "user_id", errors);
   if (hasAgent) pathSafeId(body.agent_id, "agent_id", errors);
   if ("app_id" in body) pathSafeId(body.app_id, "app_id", errors);
   if ("project_id" in body) pathSafeId(body.project_id, "project_id", errors);
   if (typeof body.query !== "string" || body.query.length < 1) errors.push("query: required, min_length 1");
+  if ("method" in body && !SEARCH_METHODS.includes(body.method)) {
+    errors.push(`method: must be one of ${SEARCH_METHODS.join("|")}, got ${JSON.stringify(body.method)}`);
+  }
+  // dto.py radius / min_score: ge=0.0, le=1.0.
+  for (const field of ["radius", "min_score"]) {
+    if (!(field in body) || body[field] === null) continue;
+    const v = body[field];
+    if (typeof v !== "number" || Number.isNaN(v) || v < 0 || v > 1) errors.push(`${field}: must be a number in 0.0..1.0`);
+  }
+  for (const field of ["include_profile", "enable_llm_rerank"]) {
+    if (field in body && typeof body[field] !== "boolean") errors.push(`${field}: must be a boolean`);
+  }
   // dto.py:123 - -1 or 1..100.
   if ("top_k" in body) {
     const k = body.top_k;

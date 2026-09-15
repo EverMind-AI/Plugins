@@ -5,7 +5,7 @@
 # transcript on disk - against a REAL EverOS, then verifies by backend receipt.
 # Not run in CI: extraction needs LLM credentials.
 #
-#   ./scripts/e2e.sh
+#   ./scripts/hooks-contract.sh
 #
 # Environment:
 #   EVEROS_CC_BASE_URL  default http://127.0.0.1:8000

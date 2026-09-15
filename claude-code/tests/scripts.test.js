@@ -106,3 +106,63 @@ test("search reports an empty result instead of printing nothing", async () => {
     assert.match(stdout, /no matching memory/i);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("the plugin version and the marketplace entry agree", () => {
+  // Two files, one number, nothing keeping them in step: the marketplace serves
+  // a version the plugin does not claim and installs go stale without a symptom.
+  const plugin = JSON.parse(fs.readFileSync(path.join(root, ".claude-plugin/plugin.json"), "utf8"));
+  const market = JSON.parse(fs.readFileSync(path.join(root, "../.claude-plugin/marketplace.json"), "utf8"));
+  const entry = market.plugins.find((p) => p.source === "./claude-code");
+  assert.ok(entry, "no marketplace entry points at ./claude-code");
+  assert.equal(entry.version, plugin.version);
+});
+
+test("every hook finishes inside the timeout hooks.json gives it", async () => {
+  // Raising any one of these constants is a one-word edit that breaks the
+  // contract invisibly: the host kills the hook mid-request, and the only
+  // symptom is memory that quietly stops working for that event.
+  const { RECALL_DEADLINE_MAX_MS, CAPTURE_DEADLINE_MS, HEALTH_TIMEOUT_MS, START_WAIT_MS,
+          TRANSCRIPT_READ_ATTEMPTS, TRANSCRIPT_READ_DELAY_MS, FLUSH_DISPATCH_MS } =
+    await import("../hooks/scripts/lib/constants.js");
+  const sweepBudget = Number(
+    /const SWEEP_BUDGET_MS = (\d+)/.exec(fs.readFileSync(path.join(root, "hooks/scripts/session-start.js"), "utf8"))[1],
+  );
+  const gitProbes = 2 * 1000; // identity.js runs at most two git calls, 1s timeout each
+  const worst = {
+    // health, then waiting for a server it started, then the sweep
+    SessionStart: HEALTH_TIMEOUT_MS + START_WAIT_MS + sweepBudget,
+    // identity resolves before the recall deadline even starts
+    UserPromptSubmit: gitProbes + RECALL_DEADLINE_MAX_MS,
+    // the transcript retries run before the add deadline
+    Stop: gitProbes + TRANSCRIPT_READ_ATTEMPTS * TRANSCRIPT_READ_DELAY_MS + CAPTURE_DEADLINE_MS,
+    SessionEnd: gitProbes + FLUSH_DISPATCH_MS,
+    PreCompact: gitProbes + FLUSH_DISPATCH_MS,
+  };
+  const hooks = JSON.parse(fs.readFileSync(path.join(root, "hooks/hooks.json"), "utf8")).hooks;
+  for (const [event, budget] of Object.entries(worst)) {
+    const timeout = hooks[event][0].hooks[0].timeout * 1000;
+    assert.ok(budget < timeout, `${event}: worst case ${budget}ms does not fit in the ${timeout}ms hooks.json allows`);
+  }
+  assert.deepEqual(Object.keys(hooks).sort(), Object.keys(worst).sort(), "a hook was added without a budget here");
+});
+
+test("status says so when the state directory cannot be written", async () => {
+  // The hooks degrade quietly here by design - memory keeps working, dedupe and
+  // the sweep do not - so this line is the only place a user finds out.
+  const server = await startFakeEveros();
+  const blocked = path.join(tmp(), "a-file");
+  fs.writeFileSync(blocked, "not a directory");
+  try {
+    const bad = await run("scripts/status.js", [], {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: path.join(blocked, "everos"),
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.equal(bad.code, 0, "a broken state directory must not break the status command");
+    assert.match(bad.stdout, /not writable/);
+    const fine = await run("scripts/status.js", [], {
+      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: tmp(),
+      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
+    });
+    assert.doesNotMatch(fine.stdout, /not writable/, "and must stay quiet when it is fine");
+  } finally { await server.close(); fs.rmSync(blocked, { force: true }); }
+});

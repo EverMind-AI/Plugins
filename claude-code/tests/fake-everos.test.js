@@ -67,7 +67,7 @@ test("the double rejects every shape EverOS rejects", async () => {
   const server = await startFakeEveros();
   const cases = [
     ["role outside the literal", "/api/v2/memory/add", { session_id: "s", messages: [{ ...VALID_MESSAGE, role: "system" }] }],
-    ["timestamp in seconds, not ms", "/api/v2/memory/add", { session_id: "s", messages: [{ ...VALID_MESSAGE, timestamp: 1789050000.5 }] }],
+    ["timestamp that is not an integer", "/api/v2/memory/add", { session_id: "s", messages: [{ ...VALID_MESSAGE, timestamp: 1789050000.5 }] }],
     ["project_id is a traversal token", "/api/v2/memory/add", { session_id: "s", project_id: "..", messages: [VALID_MESSAGE] }],
     ["project_id outside the charset", "/api/v2/memory/add", { session_id: "s", project_id: "a/b", messages: [VALID_MESSAGE] }],
     ["empty messages", "/api/v2/memory/add", { session_id: "s", messages: [] }],

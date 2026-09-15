@@ -254,13 +254,13 @@ so once per session, naming the host.
 cd claude-code
 npm test                          # node:test, no dependencies
 claude plugin validate . --strict
-./scripts/e2e.sh                  # the four hooks against a REAL EverOS
+./scripts/hooks-contract.sh       # the four hooks against a REAL EverOS
 ./scripts/e2e-claude-code.sh      # REAL Claude Code sessions against a REAL EverOS
 ```
 
 Two end-to-end scripts, because they answer different questions.
 
-`scripts/e2e.sh` feeds the hooks synthetic stdin. It proves the wire contract
+`scripts/hooks-contract.sh` feeds the hooks synthetic stdin. It proves the wire contract
 and the parts an algorithm decides deterministically - including that a
 trajectory with a detour produces an agent case - but it never starts Claude
 Code, so it cannot tell you the host still calls the hooks.

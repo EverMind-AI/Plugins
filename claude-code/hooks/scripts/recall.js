@@ -10,16 +10,19 @@ import { claimWarning, touchSession } from "./lib/state.js";
 runHook("UserPromptSubmit", async (input, ctx) => {
   const { config, debug } = ctx;
   const prompt = input.prompt ?? "";
+  const sessionId = input.session_id ?? "unknown";
+  const identity = resolveIdentity(input.cwd ?? process.cwd(), config);
+  // Proof of life for the abandoned-session sweep: a long agentic turn captures
+  // nothing for minutes, but a prompt means somebody is still here. Recorded
+  // before the recall test on purpose - "ok", "continue" and slash commands are
+  // not worth a search, and they are just as much proof that somebody is here.
+  touchSession(config.dataDir, sessionId, identity.projectId);
+
   if (!shouldRecall(prompt)) {
     debug("skipped: slash command or below the token floor");
     return undefined;
   }
 
-  const sessionId = input.session_id ?? "unknown";
-  const identity = resolveIdentity(input.cwd ?? process.cwd(), config);
-  // Proof of life for the abandoned-session sweep: a long agentic turn captures
-  // nothing for minutes, but a prompt means somebody is still here.
-  touchSession(config.dataDir, sessionId, identity.projectId);
   const client = createClient({ baseUrl: config.baseUrl });
   const query = buildQuery(prompt);
   // One signal for both tracks: the user pays this latency on every prompt.

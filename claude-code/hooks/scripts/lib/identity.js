@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { APP_ID, AGENT_ID, ID_MAX_LEN } from "./constants.js";
 
@@ -11,8 +12,20 @@ const PATH_SAFE = /[^A-Za-z0-9_.@+-]/g;
  */
 export function sanitizeId(raw, fallback) {
   if (typeof raw !== "string") return fallback;
-  const cleaned = raw.trim().replace(PATH_SAFE, "_").slice(0, ID_MAX_LEN);
+  const trimmed = raw.trim();
+  const cleaned = trimmed.replace(PATH_SAFE, "_").slice(0, ID_MAX_LEN);
   if (cleaned === "" || cleaned === "." || cleaned === "..") return fallback;
+  // Sanitizing can erase the whole name: a repository called 项目 becomes "__",
+  // and so does 测试, and so does every other name outside the whitelist, all
+  // sharing one memory partition and reading each other's decisions. Truncation
+  // does the same to two long names with a common prefix. Whenever a character
+  // was actually lost, keep the readable part and add a digest of the original
+  // so distinct names stay distinct. Ids derived from a git remote are already
+  // whitelist-clean, so this never fires on the common path.
+  if (cleaned !== trimmed) {
+    const digest = createHash("sha256").update(trimmed).digest("hex").slice(0, 8);
+    return `${cleaned.slice(0, ID_MAX_LEN - digest.length - 1)}_${digest}`;
+  }
   return cleaned;
 }
 
@@ -53,7 +66,13 @@ function repoNameFromRemote(url) {
   const segments = withoutUser.split(/[/:]/).filter(Boolean);
   if (segments.length === 0) return null;
   // Host plus the last two path segments: enough to be unique, short enough to read.
-  return segments.slice(-3).join("_");
+  const tail = segments.slice(-3);
+  // DNS is case-insensitive, so GitHub.com and github.com are one host; without
+  // this, one remote typed with a capital G splits the repository into two
+  // partitions that never see each other. Owner and repository keep their case:
+  // whether a given forge folds those is its business, not ours to guess.
+  if (tail.length === 3) tail[0] = tail[0].toLowerCase();
+  return tail.join("_");
 }
 
 /**
