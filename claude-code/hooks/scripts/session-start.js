@@ -6,6 +6,7 @@ import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { claimWarning, markFlushed, pendingFlushes } from "./lib/state.js";
 import { isLoopback } from "./lib/config.js";
+import { FLUSH_DISPATCH_MS } from "./lib/constants.js";
 
 /**
  * How long a session must sit untouched before another session may seal it.
@@ -20,7 +21,6 @@ const SWEEP_MAX_SESSIONS = 5;
  * boundary detection, so a few seconds each is normal, and five sequential
  * flushes at the old 10s per-call deadline would have been 50s against a 15s hook timeout.
  */
-const SWEEP_BUDGET_MS = 6000;
 
 
 /**
@@ -36,26 +36,44 @@ async function sweepAbandoned(config, cwd, debug) {
   if (abandoned.length === 0) return;
   const identity = resolveIdentity(cwd, config);
   const client = createClient({ baseUrl: config.baseUrl });
-  const signal = deadline(SWEEP_BUDGET_MS);
-  for (const { sessionId, projectId } of abandoned) {
-    try {
-      await client.flush(
+
+  // Dispatched together, not awaited one after another. SessionStart is on the
+  // critical path - the host holds the first prompt until this hook returns -
+  // and a real flush runs an extraction, measured at ~7 s. Sealing serially
+  // inside a 6 s budget therefore cost the user 6 s at the start of every
+  // session and still only got through one or two of them. Measured before:
+  // first response 7.0 s with nothing pending, 16.9 s with five. EverOS
+  // finishes the extraction with no client attached, exactly as it does for the
+  // SessionEnd flush the host kills.
+  const results = await Promise.all(abandoned.map(({ sessionId, projectId }) =>
+    client
+      .flush(
         // The recorded project, not this session's: the abandoned session may
         // have belonged to a different repository.
         { session_id: sessionId, app_id: identity.appId, project_id: projectId ?? identity.projectId },
-        signal,
-      );
+        deadline(FLUSH_DISPATCH_MS),
+      )
+      .then(() => ({ sessionId, sealed: true }))
+      // TIMEOUT means the socket was open and EverOS has the request; anything
+      // else means it never left. Same rule, and same loopback guard, as flush.js.
+      .catch((error) => ({
+        sessionId,
+        sealed: error.code === "TIMEOUT" && isLoopback(config.baseUrl),
+        why: error.message,
+      })),
+  ));
+
+  for (const { sessionId, sealed, why } of results) {
+    if (sealed) {
       markFlushed(config.dataDir, sessionId);
       debug(`sealed abandoned session ${sessionId}`);
-    } catch (error) {
-      // Out of budget, or the server is unwell - either way stop. The shared
-      // signal means every later flush would fail instantly anyway, so this
-      // return is the only exit the loop needs.
-      debug(`could not seal ${sessionId}: ${error.message}`);
-      return;
+    } else {
+      // Left unsealed on purpose, so a later session tries again.
+      debug(`could not seal ${sessionId}: ${why}`);
     }
   }
 }
+
 
 runHook("SessionStart", async (input, ctx) => {
   const { config, debug } = ctx;

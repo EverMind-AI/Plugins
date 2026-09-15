@@ -80,15 +80,18 @@ test("a live session that is mid-turn is not sealed underneath it", async () => 
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("the whole sweep shares one budget so it cannot outrun the hook timeout", async () => {
-  // Five sessions x 1.8s against a 6s shared budget: three get through and the
-  // rest are left for next time. Asserting the flush COUNT is what makes this
-  // test bite - wall-clock alone would be 9s either way, comfortably inside the
-  // 15s timeout, so a per-call deadline would sail past an elapsed-time check.
-  const server = await startFakeEveros({ flushDelayMs: 1800 });
+test("every abandoned session is dispatched, and the user is not made to wait", async () => {
+  // SessionStart sits on the critical path - the host holds the first prompt
+  // until this hook returns - and a real flush runs an extraction, measured at
+  // ~7 s. Sealing serially inside a 6 s budget cost the user 6 s at the start of
+  // every session and still only got through one or two. Measured end to end
+  // before the change: first response 7.0 s with nothing pending, 16.9 s with
+  // five. They are dispatched together now; EverOS finishes with no client
+  // attached, exactly as it does for the SessionEnd flush the host kills.
+  const server = await startFakeEveros({ flushDelayMs: 4000 });
   const dir = tmp();
   try {
-    const stale = new Date(Date.now() - 30 * 60 * 1000);
+    const stale = new Date(Date.now() - 45 * 60 * 1000);
     for (const id of ["s1", "s2", "s3", "s4", "s5"]) {
       markStored(dir, id, "p1", "proj");
       fs.utimesSync(statePath(dir, id), stale, stale);
@@ -100,35 +103,14 @@ test("the whole sweep shares one budget so it cannot outrun the hook timeout", a
     });
     const elapsed = Date.now() - started;
     assert.equal(code, 0);
-    const sealed = server.only("/api/v2/memory/flush").length;
-    assert.ok(sealed < 5, `all ${sealed} sessions flushed, so nothing shared a budget`);
-    assert.ok(elapsed < 14000, `sweep took ${elapsed}ms, must stay inside the 15s hook timeout`);
-  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test("the sweep stops when its budget is gone, leaving the rest for next time", async () => {
-  // Five sessions, each flush slower than the whole 6s budget. Without the
-  // budget check the loop would keep going and run past the 15s hook timeout;
-  // with it, the first one spends the budget and the rest are left unsealed.
-  const server = await startFakeEveros({ flushDelayMs: 4000 });
-  const dir = tmp();
-  try {
-    const stale = new Date(Date.now() - 60 * 60 * 1000);
-    for (const id of ["a1", "a2", "a3", "a4", "a5"]) {
-      markStored(dir, id, "p1", "proj");
-      fs.utimesSync(statePath(dir, id), stale, stale);
+    assert.equal(server.only("/api/v2/memory/flush").length, 5, "all five must be dispatched, not one or two");
+    // Concurrent dispatch measures 1.6 s; serialised it would be five dispatch
+    // deadlines, 7.5 s. The bound has to sit between them - 8 s let a serial
+    // version through, which a mutation caught.
+    assert.ok(elapsed < 4000, `sweep took ${elapsed}ms; dispatch must not be serialised`);
+    for (const id of ["s1", "s2", "s3", "s4", "s5"]) {
+      assert.equal(readState(dir, id).flushed, true, `${id} was dispatched, so it must be recorded sealed`);
     }
-    const started = Date.now();
-    const { code } = await runHookScript(SCRIPT, { session_id: "new", cwd: "/w", source: "startup" }, {
-      EVEROS_CC_BASE_URL: server.baseUrl, EVEROS_CC_DATA_DIR: dir,
-      EVEROS_CC_USER_ID: "tester", EVEROS_CC_PROJECT_ID: "proj",
-    });
-    assert.equal(code, 0);
-    assert.ok(Date.now() - started < 12000, "the whole sweep shares one budget");
-    const attempted = server.only("/api/v2/memory/flush").length;
-    assert.ok(attempted < 5, `stopped early, attempted ${attempted} of 5`);
-    const stillPending = ["a1", "a2", "a3", "a4", "a5"].filter((id) => readState(dir, id).flushed === false);
-    assert.ok(stillPending.length > 0, "the ones it could not reach stay pending for the next session");
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 

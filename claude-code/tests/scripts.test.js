@@ -124,13 +124,13 @@ test("every hook finishes inside the timeout hooks.json gives it", async () => {
   const { RECALL_DEADLINE_MAX_MS, CAPTURE_DEADLINE_MS, HEALTH_TIMEOUT_MS, START_WAIT_MS,
           TRANSCRIPT_READ_ATTEMPTS, TRANSCRIPT_READ_DELAY_MS, FLUSH_DISPATCH_MS } =
     await import("../hooks/scripts/lib/constants.js");
-  const sweepBudget = Number(
-    /const SWEEP_BUDGET_MS = (\d+)/.exec(fs.readFileSync(path.join(root, "hooks/scripts/session-start.js"), "utf8"))[1],
-  );
+  // The sweep dispatches every abandoned session at once, so it costs one
+  // dispatch deadline rather than one per session.
+  const sweepCost = FLUSH_DISPATCH_MS;
   const gitProbes = 2 * 1000; // identity.js runs at most two git calls, 1s timeout each
   const worst = {
     // health, then waiting for a server it started, then the sweep
-    SessionStart: HEALTH_TIMEOUT_MS + START_WAIT_MS + sweepBudget,
+    SessionStart: HEALTH_TIMEOUT_MS + START_WAIT_MS + sweepCost,
     // identity resolves before the recall deadline even starts
     UserPromptSubmit: gitProbes + RECALL_DEADLINE_MAX_MS,
     // the transcript retries run before the add deadline
