@@ -4,7 +4,8 @@ import { resolveIdentity } from "./lib/identity.js";
 import { createClient, deadline } from "./lib/everos.js";
 import { shouldRecall, buildQuery } from "./lib/query.js";
 import { render, summaryLine } from "./lib/render.js";
-import { claimWarning, touchSession } from "./lib/state.js";
+import { PROFILE_EVERY_TURNS } from "./lib/constants.js";
+import { claimWarning, touchSession, readState } from "./lib/state.js";
 
 
 runHook("UserPromptSubmit", async (input, ctx) => {
@@ -26,12 +27,22 @@ runHook("UserPromptSubmit", async (input, ctx) => {
   const client = createClient({ baseUrl: config.baseUrl });
   const query = buildQuery(prompt);
   // One signal for both tracks: the user pays this latency on every prompt.
+  // Sharing it is safe - a track that already answered is unaffected when the
+  // signal later fires, and a track still pending at the deadline would have
+  // blown its own deadline anyway.
   const signal = deadline(config.recallTimeoutMs);
   const common = { app_id: identity.appId, project_id: identity.projectId, query };
 
+  // promptIds is the count of turns already captured, so this is true on the
+  // first recall of a session and every PROFILE_EVERY_TURNS after it. An
+  // unwritable state dir keeps it empty, which falls back to asking every turn -
+  // the old behaviour, and the safe direction.
+  const turnsSoFar = readState(config.dataDir, sessionId).promptIds.length;
+  const wantProfile = turnsSoFar % PROFILE_EVERY_TURNS === 0;
+
   const userTrack = identity.userId
     ? client
-        .search({ ...common, user_id: identity.userId, include_profile: true }, signal)
+        .search({ ...common, user_id: identity.userId, include_profile: wantProfile }, signal)
         .catch((error) => { debug(`user track failed: ${error.message}`); return null; })
     : Promise.resolve(null);
   const agentTrack = client

@@ -42,6 +42,15 @@ export const CAPTURE_DEADLINE_MS = 20000;
 export const FLUSH_DISPATCH_MS = 1500;
 
 export const SECTION_MAX_ITEMS = 5;
+/**
+ * Ask for the developer profile on the first recall of a session and every N
+ * turns after it. EverOS fetches the profile by owner id alone - `req.query`
+ * never reaches it - so it comes back whatever you asked about, and re-sending
+ * it every turn spends context on something that did not change. It still has
+ * to reappear periodically: a long session gets compacted, and the profile goes
+ * with everything else that was in the window.
+ */
+export const PROFILE_EVERY_TURNS = 10;
 export const ID_MAX_LEN = 128;
 export const ADD_MAX_MESSAGES = 500;
 export const TOOL_RESULT_MAX_CHARS = 20000;

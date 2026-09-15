@@ -179,7 +179,7 @@ digest never appears on the common path. Folding the host to lowercase closes
 the other direction: one remote typed `GitHub.com` used to split a repository
 into two partitions that never saw each other.
 
-**The profile ignores this partitioning.** `recall/profile.py` fetches by
+**The profile ignores this partitioning, and the query.** `recall/profile.py` fetches by
 `owner_id` alone, so EverOS returns the user's profile whatever `app_id` and
 `project_id` the search carries, and the row reports the scope it was written
 under rather than the one requested (verified against a live 1.3.1: one profile
@@ -263,7 +263,7 @@ instance serves both.
    head-clip to 500 chars. The current prompt is never truncated in favour of
    history (`queryN = 1`, as OpenClaw).
 3. Two parallel `POST /search`, one per track, each with its own `.catch`:
-   user track `{user_id, app_id, project_id, query, include_profile: true}`;
+   user track `{user_id, app_id, project_id, query, include_profile}` — the profile is asked for on the first recall of a session and every 10 turns after it, because EverOS fetches it by owner id alone (`manager.py:_fetch_profile` never sees `req.query`) and it therefore comes back whatever the question was; it still has to reappear periodically, since a compaction takes it out of the window along with everything else;
    agent track `{agent_id, app_id, project_id, query}`. `top_k`, `method`,
    `radius` are not sent — EverOS defaults own them. Shared 5 s deadline,
    `EVEROS_CC_RECALL_TIMEOUT_MS` to change it.

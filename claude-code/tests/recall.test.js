@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { startFakeEveros } from "./helpers/fake-everos.js";
 import { runHookScript } from "./helpers/run-hook.js";
-import { readState } from "../hooks/scripts/lib/state.js";
+import { readState, markStored } from "../hooks/scripts/lib/state.js";
 
 const SCRIPT = "hooks/scripts/recall.js";
 
@@ -168,5 +168,27 @@ test("a half failure that also finds nothing still surfaces", async () => {
     const { json } = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", prompt: "which linter does this project use" }, envFor(server, dir));
     // Not gated on verbose: this is a failure, not a miss.
     assert.match(json.systemMessage, /personal memory unavailable this turn/);
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the profile is asked for at intervals, not every turn", async () => {
+  // EverOS fetches the profile by owner id alone - the query never reaches it -
+  // so it comes back whatever you asked about. Measured in a real session: three
+  // consecutive recalls about three different topics all carried the same
+  // profile line and nothing else relevant. It still has to reappear, because a
+  // long session gets compacted and takes the profile with it.
+  const server = await startFakeEveros({ searchFn: () => empty });
+  const dir = tmpHome();
+  try {
+    const askedOn = [];
+    for (let turn = 1; turn <= 12; turn += 1) {
+      const before = server.only("/api/v2/memory/search").length;
+      await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", prompt: `question number ${turn} about the linter setup` },
+        envFor(server, dir));
+      const sent = server.only("/api/v2/memory/search").slice(before);
+      if (sent.some((r) => r.body?.include_profile === true)) askedOn.push(turn);
+      markStored(dir, "s1", `turn${turn}`, "proj");
+    }
+    assert.deepEqual(askedOn, [1, 11], `asked on ${askedOn.join(",")}`);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
