@@ -190,7 +190,7 @@ make_repo() { # name remote
 # process, the host triggering the hooks, no shared context with any other case.
 ask() { # repo_dir data_dir prompt [extra_env...]
   local repo="$1" data="$2" prompt="$3"; shift 3
-  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 "$@" \
+  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" "$@" \
       sh -c 'M=$$; (sleep 180; kill -9 $M 2>/dev/null) & exec claude -p "$1" --model "$2" < /dev/null 2>&1' \
       _ "$prompt" "$MODEL" )
 }
@@ -201,7 +201,7 @@ ask() { # repo_dir data_dir prompt [extra_env...]
 # two-turn conversation however similar the prompts are.
 ask_resumable() { # repo_dir data_dir prompt -> prints session_id
   local repo="$1" data="$2" prompt="$3"
-  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 \
+  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" \
       sh -c 'M=$$; (sleep 180; kill -9 $M 2>/dev/null) & exec claude -p "$1" --model "$2" --output-format json < /dev/null 2>/dev/null' \
       _ "$prompt" "$MODEL" ) \
     | python3 -c "import json,sys;
@@ -211,7 +211,7 @@ except Exception: print('')"
 
 ask_resume() { # repo_dir data_dir session_id prompt
   local repo="$1" data="$2" sid="$3" prompt="$4"
-  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 \
+  ( cd "$repo" && env EVEROS_CC_BASE_URL="$BASE" EVEROS_CC_DATA_DIR="$data" EVEROS_CC_DEBUG=1 EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" \
       sh -c 'M=$$; (sleep 180; kill -9 $M 2>/dev/null) & exec claude -p --resume "$1" "$2" --model "$3" < /dev/null 2>&1' \
       _ "$sid" "$prompt" "$MODEL" )
 }
@@ -306,14 +306,41 @@ print(best)
 PY
 }
 
-search_hits() { # user_id project_id query -> prints the matching text
-  curl -fsS --max-time 20 -X POST "$BASE/api/v2/memory/search" -H 'content-type: application/json' \
-    -d "{\"user_id\":\"$1\",\"app_id\":\"claude-code\",\"project_id\":\"$2\",\"query\":\"$3\"}" 2>/dev/null \
-    | python3 -c "
-import json,sys
-try: d=json.load(sys.stdin)['data']
-except Exception: print(''); raise SystemExit
-print(' '.join((e.get('subject','')+' '+e.get('summary','')+' '+' '.join(f.get('content','') for f in e.get('atomic_facts',[]))) for e in d['episodes']))"
+# Prints the matching text, or SEARCH_FAILED if the search itself did not run.
+# The distinction is load-bearing: a check that asserts something is ABSENT reads
+# an empty answer as "absent", so a dead port or a query the shell mangled used to
+# report PASS without ever having asked. The body is built by python, not by shell
+# interpolation, so a quote inside the query cannot break the JSON either.
+# The default 5 s budget is tuned for a person typing against a warm local
+# EverOS. This script fires the next session the instant extraction finishes,
+# and every hybrid search embeds its query through a remote provider - two
+# tracks, two round trips. Two full runs lost case 1 and case 3 to `deadline
+# exceeded` while the fact was demonstrably stored and searchable, which reads
+# as "memory broke" when it was the clock. 7000 is the documented ceiling the
+# plugin clamps to, so this stays inside supported configuration.
+RECALL_MS="${E2E_RECALL_MS:-7000}"
+
+SEARCH_FAILED="__SEARCH_FAILED__"
+search_hits() { # user_id project_id query -> matching text, or SEARCH_FAILED
+  E2E_U="$1" E2E_P="$2" E2E_Q="$3" E2E_BASE="$BASE" python3 -c "
+import json, os, sys, urllib.request
+# include_profile mirrors what recall.js actually sends on its user track. A
+# probe that omits it answers from a path the plugin does not use, so 'indexed'
+# could go true while the profile-inclusive path was still cold - and the
+# opening recall then lost the 5 s budget to it.
+body = json.dumps({'user_id': os.environ['E2E_U'], 'app_id': 'claude-code',
+                   'project_id': os.environ['E2E_P'], 'query': os.environ['E2E_Q'],
+                   'include_profile': True}).encode()
+req = urllib.request.Request(os.environ['E2E_BASE'] + '/api/v2/memory/search', data=body,
+                             headers={'content-type': 'application/json'})
+try:
+    with urllib.request.urlopen(req, timeout=20) as r:
+        d = json.load(r)['data']
+except Exception:
+    print('__SEARCH_FAILED__'); sys.exit(0)
+print(' '.join((e.get('subject','') + ' ' + e.get('summary','') + ' '
+                + ' '.join(f.get('content','') for f in e.get('atomic_facts', [])))
+               for e in d['episodes']))" 2>/dev/null || printf '%s' "$SEARCH_FAILED"
 }
 
 wanted() { case " ${CASES:-} " in *" $1 "*) return 0;; "  ") return 0;; *) return 1;; esac; }
@@ -382,7 +409,11 @@ if grep -q "sparrow-7" "$WORK/c2.txt"; then
   note "the reply mentioned it, consistent with the injected context above"
 fi
 BLEED=$(search_hits "$(id -un)" github.com_e2e_beta "canary branch")
-case "$BLEED" in *sparrow-7*) bad "case 2: beta's own partition contains it";; *) ok "beta's partition is clean";; esac
+case "$BLEED" in
+  *"$SEARCH_FAILED"*) bad "case 2: the search never ran, so nothing was checked" ;;
+  *sparrow-7*)        bad "case 2: beta's own partition contains it" ;;
+  *)                  ok  "beta's partition is clean" ;;
+esac
 fi
 
 if wanted 3; then
@@ -563,7 +594,7 @@ D8="$WORK/d8"
 wait_indexed "$(id -un)" github.com_e2e_alpha "sparrow-7" \
   || note "index not settled before the interactive case"
 tmux new-session -d -s everos-e2e -x 200 -y 50 -c "$REPO_A" \
-  -e EVEROS_CC_BASE_URL="$BASE" -e EVEROS_CC_DATA_DIR="$D8" -e EVEROS_CC_DEBUG=1 \
+  -e EVEROS_CC_BASE_URL="$BASE" -e EVEROS_CC_DATA_DIR="$D8" -e EVEROS_CC_DEBUG=1 -e EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" \
   "claude --model $MODEL" 2>/dev/null
 
 # Readiness is asserted, not guessed. Scraping the pane for a border or a
@@ -674,8 +705,14 @@ printf '  %d passed, %d failed\n' "$PASS" "$FAIL"
 if [ "$FAIL" -gt 0 ]; then
   printf '  failing checks:%b\n' "$FAILED_CASES"
   printf '\n  EverOS log: %s (copied out before teardown below)\n' "$WORK/everos.log"
-  command cp "$WORK/everos.log" "${TMPDIR:-/tmp}/everos-cc-e2e-failure.log" 2>/dev/null \
-    && printf '  saved to %severos-cc-e2e-failure.log\n' "${TMPDIR:-/tmp}"
+  # 0600 before anyone can read it: this script greps its own copy for `api_key`,
+  # so it expects the log to contain one. On macOS TMPDIR is already a private
+  # per-user directory, but on Linux/CI it lands in a world-readable /tmp with
+  # the source file's mode.
+  if command cp "$WORK/everos.log" "${TMPDIR:-/tmp}/everos-cc-e2e-failure.log" 2>/dev/null; then
+    chmod 600 "${TMPDIR:-/tmp}/everos-cc-e2e-failure.log" 2>/dev/null
+    printf '  saved to %severos-cc-e2e-failure.log\n' "${TMPDIR:-/tmp}"
+  fi
   exit 1
 fi
 printf '  ALL CHECKS PASSED\n'

@@ -89,6 +89,9 @@ out.push(
   `  ${pad("data_dir")} ${config.dataDir} (${config.sources.dataDir})` +
     (stateWritable(config.dataDir) ? "" : "\n                 ⚠️  not writable — turns may be stored twice and abandoned sessions never sealed"),
 );
+// The troubleshooting entry in the README tells people to raise this; without
+// it printed here they cannot confirm the change took.
+out.push(`  ${pad("recall_ms")} ${config.recallTimeoutMs}`);
 out.push(`  ${pad("verbose")} ${config.verbose}`);
 out.push(`  ${pad("debug")} ${config.debug}`);
 

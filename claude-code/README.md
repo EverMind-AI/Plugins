@@ -172,7 +172,7 @@ whitespace-only value counts as unset and never shadows a lower layer.
 | `EVEROS_CC_USER_ID` | — | your OS user | Identity for personal memory. |
 | `EVEROS_CC_PROJECT_ID` | — | derived | Force one partition. |
 | `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | Budget for the two recall searches. Clamped to 500–7000; resolving the project id spends up to 2 s of the hook's 10 s before this starts. |
-| `EVEROS_CC_VERBOSE` | — | off | Also print "no relevant memory" and "saved N messages". |
+| `EVEROS_CC_VERBOSE` | — | off | Also print "no relevant memory", "saved N messages", and the EverOS version at SessionStart. |
 | `EVEROS_CC_DEBUG` | — | off | Write hook diagnostics to `debug.log` in the data directory. |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`, else `~/.everos/.claude-code` | Where per-session state, `debug.log` and `everos-server.log` live. |
 
@@ -194,11 +194,16 @@ Claude Code launched from a GUI inherits no shell environment. Put values that
 must always apply in `~/.claude/settings.json` under `env`, or answer the plugin
 option prompt for `base_url` and `everos_dir`.
 
+> The server this plugin starts runs with `EVEROS_MEMORIZE__MODE=agent` and the port
+> from `base_url`, both forced through the environment. Environment beats
+> `~/.everos/everos.toml`, and that server then serves every host on this machine —
+> so if you keep a different `[memorize] mode` in your config, start EverOS yourself.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/everos:status` | Server health, the identity used for capture and recall, effective configuration with the layer each value came from, and the last few errors. Start here whenever memory seems missing. |
+| `/everos:status` | Server health, the identity used for capture and recall, the effective configuration (with the resolution layer on the four values that go through one), and the recall budget in effect, and the last few debug lines. Start here whenever memory seems missing. |
 | `/everos:search <query>` | Runs the same two-track search the recall hook runs, with the same ids, and prints the block verbatim — so what you see is exactly what a prompt would have been given. |
 
 ## What is captured, and what is not
@@ -221,7 +226,7 @@ typed; images and other attachments.
 
 ## Troubleshooting
 
-**Start with `/everos:status`.** It names the first missing setup step.
+**Start with `/everos:status`.** It reports health and the resolved ids, then prints the setup checklist to walk down.
 
 | Symptom | Cause and fix |
 |---|---|

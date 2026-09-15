@@ -49,10 +49,27 @@ runHook("UserPromptSubmit", async (input, ctx) => {
       : undefined;
   }
 
+  // One track down is not "no memory" - it is half the memory, silently. Both
+  // null is already handled above; exactly one null means the other half of the
+  // answer is missing while the summary line would still read like a success.
+  const userAttempted = Boolean(identity.userId);
+  const halfDown = userAttempted && ((userData === null) !== (agentData === null));
+  const missing = userData === null ? "personal" : "agent";
+
   const rendered = render(userData, agentData);
   if (!rendered) {
+    if (halfDown) {
+      debug(`${missing} track failed and the other found nothing`);
+      return { systemMessage: `⚠️ EverOS: ${missing} memory unavailable this turn` };
+    }
     debug("no hits");
     return config.verbose ? { systemMessage: "🧠 EverOS: no relevant memory" } : undefined;
   }
-  return { additionalContext: rendered.block, systemMessage: summaryLine(rendered.counts) ?? undefined };
+  const line = summaryLine(rendered.counts);
+  return {
+    additionalContext: rendered.block,
+    // Said every turn it happens, not once per session: the warning budget is
+    // for "EverOS is down", and this is a different, recurring condition.
+    systemMessage: halfDown ? `${line ?? "🧠 EverOS"} — ${missing} memory unavailable` : (line ?? undefined),
+  };
 });

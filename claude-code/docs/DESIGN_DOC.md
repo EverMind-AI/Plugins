@@ -348,7 +348,7 @@ unset and never shadow a lower layer.
 | `EVEROS_CC_PROJECT_ID` | — | derived (§5) | force one project id (e.g. for global memory) |
 | `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | recall budget, clamped to 500-7000 because resolving the project id spends up to 2 s of the hook's 10 s first; a nonsense value falls back rather than disabling recall |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`, else `~/.everos/.claude-code` | per-session state, `debug.log`, `everos-server.log` |
-| `EVEROS_CC_VERBOSE` | — | `0` | also print recall-miss / save lines |
+| `EVEROS_CC_VERBOSE` | — | `0` | also print recall-miss / save lines and the SessionStart version line |
 | `EVEROS_CC_DEBUG` | — | `0` | write diagnostics to `${CLAUDE_PLUGIN_DATA}/debug.log` |
 
 Only `base_url` and `everos_dir` are declared in `plugin.json` `userConfig`,
@@ -374,9 +374,14 @@ prompt ids, 30-day state TTL.
   host never kills us mid-write.
 - No retries in v1. Rationale (OpenClaw handoff): a 5xx on `/add` may have
   committed; re-sending double-writes.
-- A visible `systemMessage` is emitted only when EverOS is unreachable
-  (SessionStart and first failing recall of a session, tracked in the state
-  file), so fail-open never becomes silent amnesia.
+- A visible `systemMessage` is emitted whenever memory is off or degraded, so
+  fail-open never becomes silent amnesia: EverOS unreachable (SessionStart and
+  the first failing recall of a session, tracked in the state file), no user id,
+  a `base_url` that is not loopback, and — every turn it happens, not once — one
+  of the two search tracks failing while the other answered. That last one would
+  otherwise render as a clean hit: only both tracks failing used to count as a
+  failure, so a dead user track printed `🧠 EverOS: 1 case` with the episodes and
+  the profile silently gone. A successful recall prints its summary line (D9).
 
 ## 10. Skills
 
@@ -386,7 +391,7 @@ relay its output.
 
 | Skill | Script | Output |
 |---|---|---|
-| `everos-status` | `scripts/status.js` | health (`/health` summary incl. `capabilities`, `cascade.pending`), resolved ids (`app_id`, `project_id`, `user_id`, `agent_id`), effective config with its source layer, last 5 errors from `debug.log`, and the missing setup step when unhealthy (`everos` not found / `everos init` not run / server not started) |
+| `everos-status` | `scripts/status.js` | health (`/health` summary incl. `capabilities`, `cascade.pending`), resolved ids (`app_id`, `project_id`, `user_id`, `agent_id`), effective config, with the source layer on the four values that resolve through layers, last 5 lines of `debug.log` (not filtered to errors), and a static setup checklist when unhealthy (installed / initialised / api keys filled / started) — the script does not probe, it prints the list |
 | `everos-search` | `scripts/search.js "<query>"` | both tracks searched with the same ids the hooks use; results rendered with `lib/render.js` so what the user sees is exactly what the model would be given |
 
 `skills/` is used instead of the legacy `commands/` directory.

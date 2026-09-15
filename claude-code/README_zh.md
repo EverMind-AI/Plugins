@@ -132,7 +132,7 @@ What coffee do I like?
 | `EVEROS_CC_USER_ID` | — | 系统用户 | 个人记忆的身份。 |
 | `EVEROS_CC_PROJECT_ID` | — | 自动推断 | 强制指定分区。 |
 | `EVEROS_CC_RECALL_TIMEOUT_MS` | — | `5000` | 两路召回搜索的总预算，取值被限制在 500–7000；推断 project_id 会在这个预算开始前先花掉 hook 那 10 秒里的至多 2 秒。 |
-| `EVEROS_CC_VERBOSE` | — | 关 | 额外打印「没有相关记忆」和「已保存 N 条消息」。 |
+| `EVEROS_CC_VERBOSE` | — | 关 | 额外打印「没有相关记忆」「已保存 N 条消息」，以及 SessionStart 时的 EverOS 版本行。 |
 | `EVEROS_CC_DEBUG` | — | 关 | 把 hook 诊断信息写入数据目录下的 `debug.log`。 |
 | `EVEROS_CC_DATA_DIR` | — | `$CLAUDE_PLUGIN_DATA`，否则 `~/.everos/.claude-code` | 会话状态、`debug.log`、`everos-server.log` 的位置。 |
 
@@ -149,11 +149,15 @@ export EVEROS_CC_START_CMD="uv run everos server start"
 
 从图形界面启动的 Claude Code 继承不到 shell 环境变量。需要长期生效的值，写进 `~/.claude/settings.json` 的 `env` 一节，或者在插件选项里回答 `base_url` 和 `everos_dir`。
 
+> 插件代启的 EverOS 会被强制带上 `EVEROS_MEMORIZE__MODE=agent` 和取自 `base_url` 的端口，
+> 两者都经环境变量注入。环境变量优先于 `~/.everos/everos.toml`，而这台 server 之后服务本机
+> 所有宿主——所以如果你的配置里另有 `[memorize] mode`，请自己把 EverOS 起起来。
+
 ## 命令
 
 | 命令 | 作用 |
 |---|---|
-| `/everos:status` | 服务健康状况、捕获与召回所用的身份、生效配置及每个值来自哪一层、最近几条错误。记忆看起来不工作时先跑这个。 |
+| `/everos:status` | 服务健康状况、捕获与召回所用的身份、生效配置（走分层解析的那四项会标出来自哪一层）、当前生效的召回预算、最近几行 debug 日志。记忆看起来不工作时先跑这个。 |
 | `/everos:search <query>` | 用与召回 hook 完全相同的身份跑同样的两路搜索，并原样打印那个块 —— 你看到的就是 prompt 会拿到的。 |
 
 ## 捕获什么，不捕获什么
@@ -171,7 +175,7 @@ export EVEROS_CC_START_CMD="uv run everos server start"
 
 ## 排查
 
-**先跑 `/everos:status`。** 它会指出第一个没满足的前置条件。
+**先跑 `/everos:status`。** 它报告健康状态和解析出来的身份，然后列出一份排查清单让你逐条走。
 
 | 现象 | 原因与处理 |
 |---|---|

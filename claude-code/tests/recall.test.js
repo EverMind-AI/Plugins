@@ -116,7 +116,12 @@ test("one failing track still injects the other", async () => {
   try {
     const { json } = await runHookScript(SCRIPT, { prompt: "how do we lint this repo", session_id: "s1", cwd: "/w" }, envFor(server, dir));
     assert.ok(json.hookSpecificOutput.additionalContext.includes("run-lint"));
-    assert.equal(json.systemMessage, "🧠 EverOS: 1 skill");
+    // The half that worked is still injected AND still counted - but the line
+    // must not read like a clean success. Only both-null used to count as
+    // failure, so a dead user track left this saying "🧠 EverOS: 1 skill"
+    // while episodes and the profile had silently vanished.
+    assert.match(json.systemMessage, /1 skill/);
+    assert.match(json.systemMessage, /personal memory unavailable/, json.systemMessage);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -152,5 +157,16 @@ test("a prompt too short to recall still counts as proof of life", async () => {
     assert.equal(code, 0);
     assert.equal(server.only("/api/v2/memory/search").length, 0, "still no search for a prompt this short");
     assert.equal(readState(dir, "s1").sessionId, "s1", "but the session was marked alive");
+  } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a half failure that also finds nothing still surfaces", async () => {
+  const boom = () => { throw new Error("boom"); };
+  const server = await startFakeEveros({ searchFn: (body) => (body?.user_id ? boom() : empty) });
+  const dir = tmpHome();
+  try {
+    const { json } = await runHookScript(SCRIPT, { session_id: "s1", cwd: "/w", prompt: "which linter does this project use" }, envFor(server, dir));
+    // Not gated on verbose: this is a failure, not a miss.
+    assert.match(json.systemMessage, /personal memory unavailable this turn/);
   } finally { await server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
