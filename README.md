@@ -26,6 +26,15 @@ app.
 Each integration's own README documents its lifecycle, setup, security model,
 and troubleshooting.
 
+## Community integrations
+
+Integrations from the ecosystem that live in their own repositories, built
+with partners and community contributors.
+
+| Integration | What it does | Repository |
+| --- | --- | --- |
+| [Scalekit](https://www.scalekit.com) | Identity-scoped memory: a gateway that derives EverOS memory scope from verified Scalekit OAuth token claims instead of trusting the request body | [`everos-scalekit`](https://github.com/JadeeeZh/everos-scalekit) |
+
 ## EverMind Ecosystem
 
 EverMind connects memory research, production-ready products, and practical
