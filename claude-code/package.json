@@ -1,0 +1,21 @@
+{
+  "name": "@everos-ai/claude-code-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EverOS memory for Claude Code - hooks, skills and tests. Not published to npm; Claude Code installs this plugin from git.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "validate": "claude plugin validate .",
+    "ci": "npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EverMind-AI/Plugins.git",
+    "directory": "claude-code"
+  }
+}

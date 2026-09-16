@@ -1,0 +1,77 @@
+name: Claude Code plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "claude-code/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/claude-code.yml"
+  pull_request:
+    paths:
+      - "claude-code/**"
+      - ".claude-plugin/**"
+      - ".github/workflows/claude-code.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-code-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19.0", "22.22.3"]
+    defaults:
+      run:
+        working-directory: claude-code
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Assert zero dependencies
+        run: |
+          node -e '
+            const p = require("./package.json");
+            for (const k of ["dependencies", "devDependencies", "peerDependencies"]) {
+              if (p[k] && Object.keys(p[k]).length) {
+                console.error(`${k} must stay empty, found: ${Object.keys(p[k])}`);
+                process.exit(1);
+              }
+            }
+          '
+      - name: Run tests
+        run: npm test
+
+  validate:
+    name: Plugin manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "22.22.3"
+      - name: Install the Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate ./claude-code --strict
+          claude plugin validate ./.claude-plugin/marketplace.json --strict
