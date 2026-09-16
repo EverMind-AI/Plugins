@@ -216,11 +216,26 @@ authority.
 
 ```bash
 npm ci
-npm run ci
+npm run ci                     # lint + typecheck + 20 unit tests + build
+./scripts/e2e-everos.sh        # the PACKED artifact against a REAL EverOS
 ```
 
-The tests use mocked HTTP and DSH-shaped event logs; they require no provider credentials
-and do not start an EverOS process.
+`npm run ci` uses mocked HTTP and DSH-shaped event logs. It needs no credentials and
+starts no EverOS, but for the same reason it cannot tell you the plugin works against
+the real ones: both the fetch and the session are written by the tests themselves.
+
+`scripts/e2e-everos.sh` answers that question instead. It starts its own EverOS on its
+own port under its own root, installs what `npm pack` would ship into a project holding
+DSH at its published versions, and drives the three lifecycle points through real cordis
+events on a real `@deepseek-ai/dsh-session` Session. Every check reads backend receipt —
+what EverOS logged and the markdown it wrote — and the last one asks a session that never
+saw the fact to get it back. It needs an EverOS checkout whose config has working
+llm/embedding/rerank credentials:
+
+```bash
+DSH_E2E_EVEROS_BIN=~/EverOS/.venv/bin/everos \
+DSH_E2E_SOURCE_CONFIG=~/.everos/everos.toml ./scripts/e2e-everos.sh
+```
 
 ## Current limitations
 
@@ -229,3 +244,8 @@ and do not start an EverOS process.
 - The EverOS add API has no idempotency key. An ambiguous network failure followed by a
   later retry may produce at-least-once capture semantics.
 - Recall currently has no management UI or explicit remember/forget tools.
+- `scripts/e2e-everos.sh` dispatches the agent events itself. That a real DSH turn emits
+  `agent/pre-step` at step 1 with the turn's user messages, and `agent/turn-stopping` once
+  per turn, is taken from the host's declared types rather than observed in a real run.
+- Every failure path fails open into `logger.warn`. Memory stopping is not otherwise
+  visible to the user.
