@@ -9,7 +9,7 @@
 # nothing, which is why every case here crosses a process boundary.
 #
 #   ./scripts/e2e-claude-code.sh            # all cases
-#   ./scripts/e2e-claude-code.sh 1 5        # only those cases
+#   ./scripts/e2e-claude-code.sh 1 5        # only those cases (1-10)
 #
 # Needs: claude, node >= 20, tmux, python3, curl, and an EverOS checkout whose
 # config has working llm/embedding/rerank credentials. It starts its own EverOS
@@ -275,6 +275,53 @@ print(" ".join(str(x) for x in out))
 PY
 }
 
+# The last thing the model said, from the newest transcript for a cwd.
+#
+# Assert on this, not on the pane: capture-pane shows only what is on screen at
+# the instant it runs, and a turn is finished (Stop has fired) before the UI has
+# necessarily settled - a scrape that races reports a product failure when the
+# product worked.
+last_reply() { # repo_dir
+  python3 - "$(transcript_for "$1")" <<'PY'
+import json,sys
+p=sys.argv[1] if len(sys.argv)>1 else ""
+out=[]
+if p:
+    for line in open(p):
+        try: e=json.loads(line)
+        except Exception: continue
+        if e.get("type")=="assistant":
+            for b in (e.get("message",{}).get("content") or []):
+                if b.get("type")=="text": out.append(b["text"])
+print(" ".join(out[-3:]))
+PY
+}
+
+# "<notices> <hook errors>" for one transcript: how many EverOS lines the host
+# put in front of the user, and whether it reported any hook as failing.
+warning_count() { # transcript_path
+  python3 - "$1" <<'PY'
+import json,sys
+p=sys.argv[1] if len(sys.argv)>1 else ""
+n=0;errs=0
+if p:
+    for line in open(p):
+        try: e=json.loads(line)
+        except Exception: continue
+        a=e.get("attachment") or {}
+        if a.get("type")=="hook_system_message" and "EverOS" in str(a.get("content","")): n+=1
+        if e.get("hookErrors"): errs+=1
+print(f"{n} {errs}")
+PY
+}
+
+# How many times a line appears in a log that may not exist yet. `grep -c` alone
+# prints 0 and exits 1, so the usual `|| echo 0` appends a SECOND zero and the
+# caller ends up doing arithmetic on "0\n0".
+log_count() { # file pattern
+  local n; n=$(grep -c "$2" "$1" 2>/dev/null || true); printf '%s' "${n:-0}"
+}
+
 # The newest transcript for a given working directory.
 #
 # Do NOT derive the project slug from the path: the real one differs from the
@@ -345,6 +392,69 @@ print(' '.join((e.get('subject','') + ' ' + e.get('summary','') + ' '
 
 wanted() { case " ${CASES:-} " in *" $1 "*) return 0;; "  ") return 0;; *) return 1;; esac; }
 CASES="$*"
+
+# ── driving a real terminal ──────────────────────────────────────────────────
+#
+# Interactive is a different code path in the host: it asks about folder trust,
+# renders the systemMessage in the UI, and tears down differently on /exit.
+
+# Start Claude Code in tmux and block until its own hook log proves it is live.
+#
+# Readiness is asserted, not guessed. Scraping the pane for a border or a footer
+# matches the trust dialog too, and answering that blind picks its default -
+# "No, exit" - which kills the session and leaves every later check reporting
+# "no hooks" for the wrong reason.
+tmux_start() { # repo_dir data_dir base_url [EXTRA=value ...]
+  local repo="$1" data="$2" base="$3"; shift 3
+  local extra="" e
+  for e in "$@"; do extra="$extra -e $e"; done
+  # shellcheck disable=SC2086 # $extra is a deliberate list of -e flags
+  tmux new-session -d -s everos-e2e -x 200 -y 50 -c "$repo" \
+    -e EVEROS_CC_BASE_URL="$base" -e EVEROS_CC_DATA_DIR="$data" -e EVEROS_CC_DEBUG=1 \
+    -e EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" $extra "claude --model $MODEL" 2>/dev/null
+  for _ in $(seq 1 45); do
+    if tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -q "trust this folder"; then
+      tmux send-keys -t everos-e2e Down; sleep 1; tmux send-keys -t everos-e2e Enter
+    fi
+    grep -q "\[SessionStart\]" "$data/debug.log" 2>/dev/null && return 0
+    tmux has-session -t everos-e2e 2>/dev/null || return 1
+    sleep 2
+  done
+  return 1
+}
+
+# Type a prompt, send it, and wait for the turn to finish. The Stop hook's own
+# log is the completion signal - pane text can show a reply the hooks never saw.
+# Typing and Enter go separately: an Enter in the same burst as the text is
+# swallowed by the host's input handling.
+tmux_turn() { # data_dir prompt
+  local data="$1" prompt="$2" before
+  before=$(log_count "$data/debug.log" "\[Stop\]")
+  tmux send-keys -t everos-e2e "$prompt"; sleep 2
+  tmux send-keys -t everos-e2e Enter
+  for _ in $(seq 1 60); do
+    [ "$(log_count "$data/debug.log" "\[Stop\]")" -gt "$before" ] && return 0
+    tmux has-session -t everos-e2e 2>/dev/null || return 1
+    sleep 3
+  done
+  return 1
+}
+
+# Wait for a line to appear in the hook log, then say whether it did.
+tmux_await_log() { # data_dir pattern attempts
+  for _ in $(seq 1 "$3"); do
+    grep -q "$2" "$1/debug.log" 2>/dev/null && return 0
+    tmux has-session -t everos-e2e 2>/dev/null || return 1
+    sleep 3
+  done
+  return 1
+}
+
+tmux_exit() {
+  tmux send-keys -t everos-e2e "/exit"; sleep 2; tmux send-keys -t everos-e2e Enter
+  for _ in $(seq 1 25); do tmux has-session -t everos-e2e 2>/dev/null || break; sleep 1; done
+  sleep 2
+}
 
 # ── cases ────────────────────────────────────────────────────────────────────
 
@@ -515,20 +625,7 @@ if [ -z "$TR5" ]; then
 else
   note "transcript: $(basename "$TR5")"
 fi
-WARNINGS=$(python3 - "$TR5" <<'PY'
-import json,sys
-p=sys.argv[1] if len(sys.argv)>1 else ""
-n=0;errs=0
-if p:
-    for line in open(p):
-        try: e=json.loads(line)
-        except Exception: continue
-        a=e.get("attachment") or {}
-        if a.get("type")=="hook_system_message" and "EverOS" in str(a.get("content","")): n+=1
-        if e.get("hookErrors"): errs+=1
-print(f"{n} {errs}")
-PY
-)
+WARNINGS=$(warning_count "$TR5")
 W=$(echo "$WARNINGS" | cut -d' ' -f1); E=$(echo "$WARNINGS" | cut -d' ' -f2)
 if [ -n "$TR5" ]; then
   [ "${E:-0}" = "0" ] && ok "no hook errors surfaced to the user" || bad "case 5: $E hook errors"
@@ -587,69 +684,23 @@ fi
 
 if wanted 8; then
 step "Case 8 — an interactive terminal, which is how people actually use it"
-# Everything above runs `claude -p`. Interactive is a different code path in the
-# host: it asks about folder trust, renders the systemMessage in the UI, and
-# tears down differently on /exit. Fails if any hook stops firing there.
+# Everything above runs `claude -p`. Fails if any hook stops firing in a real
+# terminal.
 D8="$WORK/d8"
 wait_indexed "$(id -un)" github.com_e2e_alpha "sparrow-7" \
   || note "index not settled before the interactive case"
-tmux new-session -d -s everos-e2e -x 200 -y 50 -c "$REPO_A" \
-  -e EVEROS_CC_BASE_URL="$BASE" -e EVEROS_CC_DATA_DIR="$D8" -e EVEROS_CC_DEBUG=1 -e EVEROS_CC_RECALL_TIMEOUT_MS="$RECALL_MS" \
-  "claude --model $MODEL" 2>/dev/null
-
-# Readiness is asserted, not guessed. Scraping the pane for a border or a
-# footer matches the trust dialog too, and answering that blind picks its
-# default - "No, exit" - which kills the session and leaves every later check
-# reporting "no hooks" for the wrong reason. The hook's own log is the only
-# unambiguous signal that a session is live.
-for _ in $(seq 1 45); do
-  if tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -q "trust this folder"; then
-    tmux send-keys -t everos-e2e Down; sleep 1; tmux send-keys -t everos-e2e Enter
-  fi
-  grep -q "\[SessionStart\]" "$D8/debug.log" 2>/dev/null && break
-  tmux has-session -t everos-e2e 2>/dev/null || break
-  sleep 2
-done
-
-if ! tmux has-session -t everos-e2e 2>/dev/null; then
-  bad "case 8: the interactive session exited before it was usable"
+if ! tmux_start "$REPO_A" "$D8" "$BASE"; then
+  bad "case 8: the interactive session never reached a live state"
+  tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -v '^\s*$' | tail -4 | sed 's/^/        /'
 else
-  if ! grep -q "\[SessionStart\]" "$D8/debug.log" 2>/dev/null; then
-    bad "case 8: the session never reached a live state (no SessionStart in the hook log)"
-    tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -v '^\s*$' | tail -4 | sed 's/^/        /'
-  fi
   ok "SessionStart fired in an interactive terminal"
-  tmux send-keys -t everos-e2e "What is this repository's canary branch called? One sentence, no tools."; sleep 2
-  tmux send-keys -t everos-e2e Enter
-  # Wait for the turn to be captured, which is what proves the round trip -
-  # the pane text alone can show a reply the hooks never saw.
-  for _ in $(seq 1 40); do
-    grep -q "\[Stop\]" "$D8/debug.log" 2>/dev/null && break
-    sleep 3
-  done
+  tmux_turn "$D8" "What is this repository's canary branch called? One sentence, no tools." \
+    || note "the interactive turn did not complete inside its budget"
   for _ in $(seq 1 40); do
     sleep 3
     tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -q "sparrow-7" && break
   done
-  # Assert on the transcript, not the pane. capture-pane shows only what is on
-  # screen at the instant it runs, and the turn is finished (Stop has fired)
-  # before the UI has necessarily settled - a scrape that races is a test that
-  # reports a product failure when the product worked.
-  TR8=$(transcript_for "$REPO_A")
-  REPLY8=$(python3 - "$TR8" <<'PY'
-import json,sys
-p=sys.argv[1] if len(sys.argv)>1 else ""
-out=[]
-if p:
-    for line in open(p):
-        try: e=json.loads(line)
-        except Exception: continue
-        if e.get("type")=="assistant":
-            for b in (e.get("message",{}).get("content") or []):
-                if b.get("type")=="text": out.append(b["text"])
-print(" ".join(out[-3:]))
-PY
-)
+  REPLY8=$(last_reply "$REPO_A")
   case "$REPLY8" in
     *sparrow-7*) ok "interactive session recalled the fact (from the transcript)" ;;
     *) bad "case 8: interactive session did not recall"
@@ -661,10 +712,8 @@ PY
     && ok "the recall line is visible in the UI" || note "no visible recall line (only shown when there are hits)"
   # Count what the SERVER saw, so the seal below is checked against EverOS and
   # not against the plugin's own bookkeeping.
-  FLUSHES_BEFORE=$(grep -c "POST /api/v2/memory/flush" "$WORK/everos.log" 2>/dev/null || echo 0)
-  tmux send-keys -t everos-e2e "/exit"; sleep 2; tmux send-keys -t everos-e2e Enter
-  for _ in $(seq 1 25); do tmux has-session -t everos-e2e 2>/dev/null || break; sleep 1; done
-  sleep 2
+  FLUSHES_BEFORE=$(log_count "$WORK/everos.log" "POST /api/v2/memory/flush")
+  tmux_exit
   HOOKS_SEEN=$(grep -oE "\[(SessionStart|UserPromptSubmit|Stop|SessionEnd)\]" "$D8/debug.log" 2>/dev/null | sort -u | tr -d '[]' | tr '\n' ' ')
   case "$HOOKS_SEEN" in
     *SessionStart*Stop*|*Stop*SessionStart*) ok "hooks fired interactively: $HOOKS_SEEN" ;;
@@ -682,7 +731,7 @@ PY
   # without EverOS having received anything means nothing ever seals that
   # session - which is exactly what an earlier optimistic mark did here, while
   # this check passed on the plugin's own bookkeeping.
-  FLUSHES_AFTER=$(grep -c "POST /api/v2/memory/flush" "$WORK/everos.log" 2>/dev/null || echo 0)
+  FLUSHES_AFTER=$(log_count "$WORK/everos.log" "POST /api/v2/memory/flush")
   SEALED8=$(python3 -c "
 import glob,json
 for f in glob.glob('$D8/state/*.json'):
@@ -695,6 +744,121 @@ for f in glob.glob('$D8/state/*.json'):
     [ "$SEALED8" = "True" ] \
       && bad "case 8: sealed=true with no flush at EverOS - the sweep will now skip a session nothing ever sealed" \
       || ok "left unsealed, so the next session's sweep still has it"
+  fi
+fi
+fi
+
+if wanted 9; then
+step "Case 9 — /clear and a compaction, which nothing had ever driven"
+# Case 8 proves the hooks fire in a terminal, but it never leaves the first
+# context. /clear and a compaction both cut the conversation out from under a
+# live session, and both are ordinary daily use; neither had ever been driven
+# against a real host, here or by hand.
+#
+# /clear is the sharper of the two to assert on: it removes the history
+# entirely, so a correct answer after it cannot have come from the window. It
+# can only have come from a fresh recall.
+D9="$WORK/d9"
+Q9="What is this repository's canary branch called? One sentence, no tools."
+wait_indexed "$(id -un)" github.com_e2e_alpha "sparrow-7" \
+  || note "index not settled before the long-session case"
+if ! tmux_start "$REPO_A" "$D9" "$BASE"; then
+  bad "case 9: the session never reached a live state"
+  tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -v '^\s*$' | tail -4 | sed 's/^/        /'
+else
+  tmux_turn "$D9" "$Q9" || note "the first turn did not complete inside its budget"
+
+  tmux send-keys -t everos-e2e "/clear"; sleep 2; tmux send-keys -t everos-e2e Enter
+  if tmux_await_log "$D9" "session start (clear)" 20; then
+    ok "/clear fired SessionStart"
+  else
+    bad "case 9: /clear did not fire SessionStart"
+  fi
+  tmux_turn "$D9" "$Q9" || note "the turn after /clear did not complete inside its budget"
+  case "$(last_reply "$REPO_A")" in
+    *sparrow-7*) ok "memory survived /clear, and only a fresh recall could have answered" ;;
+    *) bad "case 9: nothing recalled after /clear"
+       note "last assistant text: $(last_reply "$REPO_A" | tail -c 120)" ;;
+  esac
+
+  # A compaction runs PreCompact -> flush, which SEALS the session, and then the
+  # host keeps the same session going. Everything said afterwards depends on the
+  # next turn reopening it: a session left sealed has flushed=true, which is
+  # exactly what makes the sweep skip it, so the rest of the conversation would
+  # never reach EverOS at all.
+  tmux send-keys -t everos-e2e "/compact"; sleep 2; tmux send-keys -t everos-e2e Enter
+  if tmux_await_log "$D9" "PreCompact:" 60; then
+    ok "a compaction sealed the session (PreCompact fired)"
+  else
+    bad "case 9: PreCompact never fired on /compact"
+    tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -v '^\s*$' | tail -3 | sed 's/^/        /'
+  fi
+  tmux_await_log "$D9" "session start (compact)" 20 \
+    && ok "and the host reopened the session with SessionStart(compact)" \
+    || note "no SessionStart(compact) in the log - the host does not always emit one"
+
+  tmux_turn "$D9" "Say the canary branch name again, one sentence, no tools." \
+    || note "the turn after the compaction did not complete inside its budget"
+  # The newest state file, not any of them: /clear started a second session and
+  # the one it replaced is unsealed by construction, so `any` would pass here
+  # even if the compacted session had stayed sealed.
+  REOPENED=$(python3 -c "
+import glob,json,os
+fs=glob.glob('$D9/state/*.json')
+if not fs: print('no-state')
+else:
+    try:
+        st=json.load(open(max(fs,key=os.path.getmtime)))
+        print('reopened' if not st.get('flushed') and st.get('promptIds') else 'sealed')
+    except Exception as e: print('unreadable')" 2>/dev/null)
+  [ "$REOPENED" = "reopened" ] \
+    && ok "and the turn after it reopened the session, so it is still sweepable" \
+    || bad "case 9: the session did not reopen after the compaction ($REOPENED) - nothing said later would be stored"
+  tmux_exit
+fi
+fi
+
+if wanted 10; then
+step "Case 10 — EverOS down for a whole conversation, not just one turn"
+# Case 5 asserts "exactly one warning" inside a single-turn `claude -p` session,
+# where one is the only number it could have been. The promise is about a
+# conversation: the notice appears once and then the session stays quiet while
+# the user keeps working. Three turns is the smallest run that can tell those
+# two apart.
+D10="$WORK/d10"
+REPO_D=$(make_repo repo-d "https://github.com/e2e/delta.git")
+if ! tmux_start "$REPO_D" "$D10" "http://127.0.0.1:1" EVEROS_CC_START_CMD=definitely-not-a-real-binary; then
+  bad "case 10: the session never reached a live state with memory down"
+  tmux capture-pane -t everos-e2e -p 2>/dev/null | grep -v '^\s*$' | tail -4 | sed 's/^/        /'
+else
+  ANSWERED=0
+  for q in "What is 2+2? Just the number, no tools." \
+           "And 3+3? Just the number, no tools." \
+           "And 5+5? Just the number, no tools."; do
+    tmux_turn "$D10" "$q" && ANSWERED=$((ANSWERED+1)) || note "a turn did not complete: $q"
+  done
+  [ "$ANSWERED" = "3" ] \
+    && ok "three turns answered normally with memory unreachable" \
+    || bad "case 10: only $ANSWERED of 3 turns completed with memory down"
+  # Before the session goes away: what the user could actually see. The assertion
+  # below reads the transcript, and a transcript that records nothing would look
+  # identical to a plugin that said nothing.
+  tmux capture-pane -t everos-e2e -p -S -200 2>/dev/null > "$WORK/c10-pane.txt"
+  tmux_exit
+  TR10=$(transcript_for "$REPO_D")
+  if [ -z "$TR10" ]; then
+    bad "case 10: no transcript for $REPO_D - the checks below would pass vacuously"
+  else
+    W10=$(warning_count "$TR10")
+    [ "$(echo "$W10" | cut -d' ' -f2)" = "0" ] \
+      && ok "no hook errors over the whole conversation" \
+      || bad "case 10: $(echo "$W10" | cut -d' ' -f2) hook errors"
+    case "$(echo "$W10" | cut -d' ' -f1)" in
+      1) ok "one warning across three turns, then silence" ;;
+      0) bad "case 10: memory was down and the user was never told"
+         note "warnings visible on the pane: $(grep -c "EverOS" "$WORK/c10-pane.txt" 2>/dev/null || true)" ;;
+      *) bad "case 10: $(echo "$W10" | cut -d' ' -f1) warnings across three turns (expected 1)" ;;
+    esac
   fi
 fi
 fi

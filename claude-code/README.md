@@ -275,10 +275,11 @@ a real terminal under tmux, and asks whether memory took effect. It judges by
 backend receipt: the markdown on disk, a real search, and the context the
 plugin actually put in front of the model, read back from the transcript. A
 session that is still open can always answer from its own context, so every
-case here crosses a process boundary. Eight cases: cross-session recall, that
+case here crosses a process boundary. Ten cases: cross-session recall, that
 another repository cannot see it, that a worktree can, the trajectory a
 tool-using session sends, fail-open, the sweep, that host noise never becomes
-memory, and an interactive terminal.
+memory, an interactive terminal, a long session that is cleared and compacted,
+and a whole conversation with memory down.
 
 Both need LLM credentials, so neither runs in CI. Each starts its own EverOS on
 its own port under its own root and never touches a server you are running.
