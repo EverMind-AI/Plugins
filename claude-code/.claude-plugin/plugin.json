@@ -1,0 +1,25 @@
+{
+  "name": "everos",
+  "version": "0.1.0",
+  "description": "EverOS memory for Claude Code. Recalls relevant memories before every prompt, saves each finished turn with its full tool-call trajectory, and seals the session on exit. Backed by a local EverOS server.",
+  "author": {
+    "name": "EverMind AI",
+    "url": "https://evermind.ai/"
+  },
+  "homepage": "https://github.com/EverMind-AI/Plugins/tree/main/claude-code",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "recall", "persistence", "everos", "local-first"],
+  "userConfig": {
+    "base_url": {
+      "type": "string",
+      "title": "EverOS base URL",
+      "description": "Address of your local EverOS server. Leave as-is unless you moved it.",
+      "default": "http://127.0.0.1:8000"
+    },
+    "everos_dir": {
+      "type": "directory",
+      "title": "EverOS checkout directory",
+      "description": "Only needed when 'everos' is not on your PATH - point this at your EverOS checkout and set EVEROS_CC_START_CMD to 'uv run everos server start'. Leave empty otherwise."
+    }
+  }
+}

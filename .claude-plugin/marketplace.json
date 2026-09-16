@@ -1,0 +1,19 @@
+{
+  "name": "everos",
+  "description": "Official EverMind AI plugins for Claude Code, backed by a local EverOS memory server.",
+  "owner": {
+    "name": "EverMind AI",
+    "email": "support@evermind.ai",
+    "url": "https://evermind.ai/"
+  },
+  "plugins": [
+    {
+      "name": "everos",
+      "source": "./claude-code",
+      "description": "EverOS memory for Claude Code - automatic recall, capture and session seal against a local EverOS server.",
+      "version": "0.1.0",
+      "homepage": "https://github.com/EverMind-AI/Plugins/tree/main/claude-code",
+      "license": "Apache-2.0"
+    }
+  ]
+}
