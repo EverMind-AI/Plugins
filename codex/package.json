@@ -5,9 +5,12 @@
   "description": "EverOS memory for Codex - hooks, skills and tests. Not published to npm; Codex installs this plugin from a marketplace.",
   "license": "Apache-2.0",
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
-    "test": "node --test tests/*.test.js",
+    "test": "node scripts/check-manifests.mjs && node --test tests/*.test.js",
+    "check": "node scripts/check-manifests.mjs",
     "ci": "npm test"
   },
   "repository": {
