@@ -1,0 +1,13 @@
+{
+  "name": "everos",
+  "interface": { "displayName": "EverOS" },
+  "plugins": [
+    {
+      "name": "everos",
+      "source": { "source": "local", "path": "./codex" },
+      "description": "EverOS memory for Codex - automatic recall, capture and session seal against a local EverOS server.",
+      "policy": { "installation": "AVAILABLE" },
+      "category": "Developer Tools"
+    }
+  ]
+}

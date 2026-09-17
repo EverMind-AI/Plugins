@@ -1,0 +1,21 @@
+{
+  "name": "@everos-ai/codex-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "EverOS memory for Codex - hooks, skills and tests. Not published to npm; Codex installs this plugin from a marketplace.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "test": "node scripts/check-manifests.mjs && node --test tests/*.test.js",
+    "check": "node scripts/check-manifests.mjs",
+    "ci": "npm test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EverMind-AI/Plugins.git",
+    "directory": "codex"
+  }
+}
