@@ -1,0 +1,30 @@
+{
+  "name": "everos",
+  "version": "0.1.0",
+  "description": "EverOS memory for Codex. Recalls relevant memories before every prompt, saves each finished turn with its full tool-call trajectory, and seals the session on exit. Backed by a local EverOS server, so the same memory is shared with every other agent pointed at it.",
+  "author": {
+    "name": "EverMind AI"
+  },
+  "homepage": "https://github.com/EverMind-AI/Plugins/tree/main/codex",
+  "repository": "https://github.com/EverMind-AI/Plugins/tree/main/codex",
+  "license": "Apache-2.0",
+  "keywords": [
+    "memory",
+    "recall",
+    "persistence",
+    "everos",
+    "local-first"
+  ],
+  "interface": {
+    "displayName": "EverOS Memory",
+    "shortDescription": "Cross-session memory backed by your own EverOS",
+    "longDescription": "EverOS Memory gives Codex memory that outlives a session and is shared with every other agent pointed at the same EverOS. It recalls what is relevant to the prompt rather than replaying a fixed block, partitions memory per repository, and never leaves your machine unless you point it somewhere else.",
+    "developerName": "EverMind AI",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://evermind.ai/"
+  }
+}
