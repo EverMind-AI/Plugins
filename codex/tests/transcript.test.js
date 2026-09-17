@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import {
   lastTurnId,
@@ -36,6 +36,14 @@ const toolCall = (callId, name, input, i, turn = "t1") =>
   item({ type: "custom_tool_call", id: `c${i}`, call_id: callId, name, status: "completed", input, ...meta(turn) }, i);
 const toolOutput = (callId, text, i, turn = "t1") =>
   item({ type: "custom_tool_call_output", id: `o${i}`, call_id: callId, output: [{ type: "output_text", text }], ...meta(turn) }, i);
+
+const made = [];
+const tmpDir = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-transcript-"));
+  made.push(dir);
+  return dir;
+};
+after(() => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: true }); });
 
 const ids = { userId: "u", agentId: "a" };
 const jsonl = (entries) => entries.map((e) => JSON.stringify(e)).join("\n");
@@ -194,7 +202,7 @@ test("truncateMiddle keeps head and tail and says what it cut", () => {
 });
 
 test("readTurn waits for the closing assistant message rather than capturing half a turn", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-transcript-"));
+  const dir = tmpDir();
   const file = path.join(dir, "rollout.jsonl");
   fs.writeFileSync(file, jsonl([message("user", "q", 0), toolCall("c1", "exec", "{}", 1), toolOutput("c1", "out", 2)]));
   // The reply lands while readTurn is still retrying, exactly as it does live.
@@ -209,7 +217,7 @@ test("readTurn waits for the closing assistant message rather than capturing hal
 });
 
 test("an interrupted turn is captured rather than dropped", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-transcript-"));
+  const dir = tmpDir();
   const file = path.join(dir, "rollout.jsonl");
   fs.writeFileSync(file, jsonl([message("user", "q", 0)])); // no reply will ever come
   const turn = await readTurn(file, "t1", { attempts: 2, delayMs: 10 });
