@@ -89,5 +89,11 @@ test("the notice is claimed once and then stays quiet", () => {
 
 test("an unwritable data dir costs nobody a session", () => {
   // Staying quiet is the safe direction: a notice must never break a start.
-  assert.equal(claimOverlapNotice("/proc/definitely/not/writable"), false);
+  //
+  // A regular file standing in for a parent directory makes mkdir fail with
+  // ENOTDIR on every platform. An OS-specific path like /proc would be a test
+  // that means something different on each runner.
+  const blocked = path.join(tmp(), "a-file");
+  fs.writeFileSync(blocked, "not a directory");
+  assert.equal(claimOverlapNotice(path.join(blocked, "data")), false);
 });
