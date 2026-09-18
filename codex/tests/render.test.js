@@ -269,3 +269,30 @@ test("a closing tag with attributes or a self-closing slash cannot reach the hos
   // Scoped to closing tags on purpose: arithmetic must survive untouched.
   assert.equal(neutralizeFenceTokens("a < b and c > d"), "a < b and c > d");
 });
+
+test("a memory block the user quoted is their words, not ours", () => {
+  // The reason stripping is leading-only. On Codex additionalContext arrives as
+  // a `developer` item and never reaches this path, so a block sitting inside a
+  // user message got there because the user pasted it - asking about it, most
+  // likely. Removing it would delete their question to close a loop the role
+  // filter already closes.
+  const block = `${MEMORY_OPEN}\nrecalled\n${MEMORY_CLOSE}`;
+  assert.equal(stripInjectedMemory(`why did you inject ${block} here?`), `why did you inject ${block} here?`);
+});
+
+test("the assistant's own restatement does not take a second slot", () => {
+  // The loop this closes: recall injects a fact, the model answers using it,
+  // that answer is stored, and extraction turns it into a second entry saying
+  // the same thing in the assistant's words. Left alone, one fact eats slot
+  // after slot while genuinely new memories fall off the end.
+  const out = render({
+    episodes: [
+      { id: "a", subject: "Canary branch is sparrow-7", summary: "The canary branch for this repository is sparrow-7, set by the release owner." },
+      { id: "b", subject: "Canary branch sparrow-7 confirmed", summary: "Assistant confirmed the canary branch for this repository is sparrow-7." },
+      { id: "c", subject: "Deploy window", summary: "Deploys go out on Tuesdays, owned by the release team." },
+    ],
+  }, null);
+  const lines = out.block.split("\n").filter((l) => l.startsWith("- "));
+  assert.equal(lines.filter((l) => l.includes("sparrow-7")).length, 1, "the restatement took a slot of its own");
+  assert.equal(lines.filter((l) => l.includes("Tuesdays")).length, 1, "the unrelated memory was pushed out");
+});

@@ -19,8 +19,20 @@ const ITEM_MAX_CHARS = 300;
  * How much of a line's vocabulary must already have been said for it to be
  * dropped. High enough that two memories about different subjects both survive
  * even when they share ordinary words.
+ *
+ * 0.7 rather than 0.8, measured on a real library. The model answers using what
+ * was recalled, that answer is stored, and extraction turns it into a second
+ * entry saying the same thing in the assistant's words - "Assistant confirmed
+ * the canary branch is sparrow-7" beside the original. Those restatements land
+ * between 0.7 and 0.8 containment, so 0.8 let one of every three through and
+ * two of three slots went to one fact.
+ *
+ * The move costs nothing observable: across 159,600 pairs of real entries the
+ * number judged duplicate is identical at 0.8, 0.75, 0.7, 0.65 and 0.6 (132
+ * pairs, 0.08%). Only at 0.5 does it jump, to 391. Real memories about
+ * different things simply do not overlap that much.
  */
-const DEDUPE_CONTAINMENT = 0.8;
+const DEDUPE_CONTAINMENT = 0.7;
 /**
  * Cap for the assembled block, about 2000 tokens. The per-line cap alone is not
  * enough: a full profile plus episodes carrying three facts each, cases and
@@ -243,6 +255,15 @@ export function summaryLine(counts) {
  * else is the user's own text (quoting us) and must be left untouched. A dangling
  * opener with no closer is likewise left alone - cutting to end of file would eat
  * the user's real words.
+ */
+/**
+ * Remove a block this plugin injected from the start of a message.
+ *
+ * Leading only, on purpose. On Codex `additionalContext` arrives as a
+ * `developer` item and never reaches this path at all - measured - so the only
+ * block that can appear inside a user message is one the user quoted
+ * themselves, asking about it. Stripping that would delete their words to close
+ * a loop that the role filter already closes.
  */
 export function stripInjectedMemory(text) {
   let t = String(text ?? "").trimStart();
