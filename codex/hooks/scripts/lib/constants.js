@@ -41,7 +41,21 @@ export const CAPTURE_DEADLINE_MS = 20000;
  */
 export const FLUSH_DISPATCH_MS = 1500;
 
-export const SECTION_MAX_ITEMS = 5;
+/**
+ * Lines per section of the injected block.
+ *
+ * Deliberately conservative to start with. Measured against a real library
+ * (1162 episode entries on disk): at 5 a full block is about 4,600 characters
+ * on every prompt, and a 40-turn session spends roughly 180 kB of context on
+ * recall. At 3 that is about 2,800.
+ *
+ * The cost of being too low is a memory ranked fourth or fifth never reaching
+ * the model; the cost of being too high is crowding out the conversation the
+ * user is actually having. Neither is measurable from here - raise it when
+ * something that should have been remembered was not, lower it when the block
+ * reads as noise.
+ */
+export const SECTION_MAX_ITEMS = 3;
 /**
  * Ask for the developer profile on the first recall of a session and every N
  * turns after it. EverOS fetches the profile by owner id alone - `req.query`

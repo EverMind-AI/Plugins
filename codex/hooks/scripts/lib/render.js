@@ -23,10 +23,14 @@ const ITEM_MAX_CHARS = 300;
 const DEDUPE_CONTAINMENT = 0.8;
 /**
  * Cap for the assembled block, about 2000 tokens. The per-line cap alone is not
- * enough: a full profile plus five episodes with three facts each, five cases
- * and five skills reaches roughly 14 kB, which is a lot to spend on every
- * single prompt. Lines are dropped from the end, so the profile and the
- * highest-scoring episodes survive.
+ * enough: a full profile plus episodes carrying three facts each, cases and
+ * skills reaches roughly 14 kB at the section sizes this started with, which is
+ * a lot to spend on every single prompt. Lines are dropped from the end, so the
+ * profile and the highest-scoring episodes survive.
+ *
+ * With SECTION_MAX_ITEMS at 3 and real data this is not reached - a full block
+ * measures about 2,800 characters. It stays as the backstop for a library whose
+ * entries are longer than the ones measured.
  */
 const BLOCK_MAX_CHARS = 8000;
 
