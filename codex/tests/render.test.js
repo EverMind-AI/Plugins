@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { render, summaryLine, neutralizeFenceTokens, stripInjectedMemory, MEMORY_OPEN, MEMORY_CLOSE } from "../hooks/scripts/lib/render.js";
+import { SECTION_MAX_ITEMS } from "../hooks/scripts/lib/constants.js";
 
 const empty = { episodes: [], profiles: [], agent_cases: [], agent_skills: [], unprocessed_messages: [] };
 
@@ -86,11 +87,13 @@ test("genuinely different memories that share vocabulary both survive", () => {
   assert.equal(out.counts.episodes, 3);
 });
 
-test("render caps every section at five items", () => {
+test("render caps every section at SECTION_MAX_ITEMS", () => {
   const many = Array.from({ length: 9 }, (_, i) => ({ id: `e${i}`, subject: `S${i}`, summary: `m${i}`, atomic_facts: [] }));
   const out = render({ ...empty, episodes: many }, empty);
-  assert.equal((out.block.match(/^- S\d/gm) ?? []).length, 5);
-  assert.equal(out.counts.episodes, 5);
+  assert.equal((out.block.match(/^- S\d/gm) ?? []).length, SECTION_MAX_ITEMS);
+  assert.equal(out.counts.episodes, SECTION_MAX_ITEMS);
+  // The cap has to actually bite: ten went in.
+  assert.ok(SECTION_MAX_ITEMS < 10);
 });
 
 test("only one profile is injected, however many the server returns", () => {
@@ -265,6 +268,16 @@ test("a closing tag with attributes or a self-closing slash cannot reach the hos
   }
   // Scoped to closing tags on purpose: arithmetic must survive untouched.
   assert.equal(neutralizeFenceTokens("a < b and c > d"), "a < b and c > d");
+});
+
+test("a memory block the user quoted is their words, not ours", () => {
+  // The reason stripping is leading-only. On Codex additionalContext arrives as
+  // a `developer` item and never reaches this path, so a block sitting inside a
+  // user message got there because the user pasted it - asking about it, most
+  // likely. Removing it would delete their question to close a loop the role
+  // filter already closes.
+  const block = `${MEMORY_OPEN}\nrecalled\n${MEMORY_CLOSE}`;
+  assert.equal(stripInjectedMemory(`why did you inject ${block} here?`), `why did you inject ${block} here?`);
 });
 
 test("the assistant's own restatement does not take a second slot", () => {
