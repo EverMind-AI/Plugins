@@ -96,6 +96,10 @@ you assume the obvious thing. Both were found by checking, not by reading docs:
 - **There is no `CODEX_PLUGIN_ROOT`.** Codex sets `CLAUDE_PLUGIN_ROOT` and
   `CLAUDE_PLUGIN_DATA`. A command written against a `CODEX_`-prefixed name
   expands to an empty string and the hook never finds its script.
+- **The hook timeout field is `timeout`, in seconds**, not `timeout_sec` - which
+  the Codex binary does carry, for MCP servers. Declared as `timeout_sec` it is
+  ignored and a hanging hook holds the session; measured, a hook sleeping 30 s
+  cost 40 s with `timeout_sec: 1` and 10 s with `timeout: 1`.
 - **A plugin's `hooks.json` belongs under `hooks/`.** At the plugin root it is
   never read - the plugin installs, reports `installed, enabled`, and fires
   nothing, with no error anywhere. The shipped figma and replayio plugins keep

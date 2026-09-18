@@ -46,6 +46,21 @@ found by checking, and either one silently disables the whole plugin:
    run. Whatever path loads those two, it is not the one a marketplace install
    uses.
 
+3. **The host timeout field is `timeout`, in seconds** - the same name Claude
+   Code uses, despite `timeout_sec` appearing in the binary. That string is MCP
+   server configuration. Measured with a hook that sleeps 30 s:
+
+   | declared | session took |
+   |---|---|
+   | nothing | 42 s |
+   | `timeout_sec: 1` | 40 s - ignored |
+   | `timeout: 1` | **10 s** - honoured |
+
+   Without it a hook that hangs holds the session for as long as it hangs. The
+   internal deadlines in `constants.js` are the first gate; this is the backstop
+   for a hook that never reaches one, and `scripts/check-manifests.mjs` asserts
+   each hook's worst case fits inside what it declares.
+
 ## 2. Turns are addressable
 
 Codex stamps `internal_chat_message_metadata_passthrough.turn_id` on every

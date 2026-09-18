@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const problems = [];
+let declaredTimeouts = {};
 const check = (ok, message) => { if (!ok) problems.push(message); };
 
 // 1. Location. A plugin's hooks.json is read from hooks/, never from the plugin
@@ -28,6 +29,24 @@ if (fs.existsSync(hooksPath)) {
   const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
   const events = Object.entries(hooks.hooks ?? {});
   check(events.length > 0, "hooks.json registers no events");
+
+  // Every hook declares a host timeout. The internal deadlines are the first
+  // gate; this is the backstop for a hook that hangs before reaching one.
+  // Measured against Codex 0.149.0: the field is `timeout`, in seconds - the
+  // same name Claude Code uses. `timeout_sec`, which the binary does carry, is
+  // MCP server configuration and is ignored here: declared as `timeout_sec: 1`
+  // a hook sleeping 30 s still took 40 s, and as `timeout: 1` it took 10 s.
+  declaredTimeouts = {};
+  for (const [event, matchers] of events) {
+    for (const matcher of matchers) {
+      for (const hook of matcher.hooks ?? []) {
+        check(!("timeout_sec" in hook), `${event}: uses timeout_sec, which Codex ignores for hooks - use timeout`);
+        const seconds = hook.timeout;
+        check(Number.isInteger(seconds) && seconds > 0, `${event}: declares no timeout`);
+        if (Number.isInteger(seconds)) declaredTimeouts[event] = Math.min(declaredTimeouts[event] ?? Infinity, seconds);
+      }
+    }
+  }
 
   for (const [event, matchers] of events) {
     for (const matcher of matchers) {
@@ -53,6 +72,27 @@ if (fs.existsSync(hooksPath)) {
         }
       }
     }
+  }
+}
+
+// 3b. The work each hook does has to fit inside the timeout it declares. This is
+//     what makes the budgets in constants.js true rather than aspirational: the
+//     comment there names the UserPromptSubmit timeout, and until this ran there
+//     was no such timeout at all.
+if (fs.existsSync(hooksPath)) {
+  const c = await import("../hooks/scripts/lib/constants.js");
+  const gitProbes = 2 * 1000; // identity.js runs at most two git calls, 1 s each
+  const worst = {
+    SessionStart: c.HEALTH_TIMEOUT_MS + c.START_WAIT_MS,
+    UserPromptSubmit: gitProbes + c.RECALL_DEADLINE_MAX_MS,
+    Stop: c.TRANSCRIPT_READ_ATTEMPTS * c.TRANSCRIPT_READ_DELAY_MS + c.CAPTURE_DEADLINE_MS,
+    SessionEnd: c.FLUSH_DISPATCH_MS,
+    PreCompact: c.FLUSH_DISPATCH_MS,
+  };
+  for (const [event, ms] of Object.entries(worst)) {
+    const seconds = declaredTimeouts[event];
+    if (seconds === undefined) continue; // already reported above
+    check(ms <= seconds * 1000, `${event}: worst case is ${ms}ms but hooks.json allows ${seconds}s`);
   }
 }
 
