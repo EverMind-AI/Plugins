@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 
 import {
   claimOverlapNotice,
@@ -11,7 +11,15 @@ import {
   readFeatureFlag,
 } from "../hooks/scripts/lib/native-memory.js";
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-"));
+// Registered, not just removed at the end of each test: a test that throws
+// skips its own cleanup, and the suite then litters /tmp on every run.
+const made = [];
+const tmp = () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-"));
+  made.push(dir);
+  return dir;
+};
+after(() => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: true }); });
 
 test("CODEX_HOME wins over the default", () => {
   assert.equal(codexHome({ CODEX_HOME: "/somewhere/else" }), "/somewhere/else");
