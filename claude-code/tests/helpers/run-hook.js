@@ -6,6 +6,29 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/**
+ * Temp directories this helper made, removed when the process exits.
+ *
+ * Without this the suite left one per hook invocation - 56 on every run, and a
+ * session of development leaves hundreds behind. `exit` rather than an `after`
+ * hook because this is a module every test file shares, not a test itself, and
+ * a failing test must clean up as reliably as a passing one.
+ */
+const created = [];
+process.on("exit", () => {
+  for (const dir of created) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort at exit */ }
+  }
+});
+
+/** A data directory only when the caller did not name one of its own. */
+function dataDirFor(env) {
+  if (env.EVEROS_CC_DATA_DIR) return env.EVEROS_CC_DATA_DIR;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-hook-"));
+  created.push(dir);
+  return dir;
+}
+
 /** Spawn a hook exactly as Claude Code would: JSON on stdin, JSON on stdout. */
 export function runHookScript(relativeScriptPath, stdinObject, env = {}) {
   return new Promise((resolve, reject) => {
@@ -13,12 +36,12 @@ export function runHookScript(relativeScriptPath, stdinObject, env = {}) {
       env: {
         PATH: process.env.PATH,
         HOME: process.env.HOME,
+        ...env,
         // Never let a test that forgot EVEROS_CC_DATA_DIR fall through to the
         // default, which is ~/.everos/.claude-code - the developer's real
         // directory. A missing env var does not fail loudly; it silently writes
         // somewhere it must never write.
-        EVEROS_CC_DATA_DIR: fs.mkdtempSync(path.join(os.tmpdir(), "everos-cc-hook-")),
-        ...env,
+        EVEROS_CC_DATA_DIR: dataDirFor(env),
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
