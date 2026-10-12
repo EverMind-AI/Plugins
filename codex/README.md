@@ -31,7 +31,7 @@ Good to know:
 ## Install
 
 ```bash
-codex plugin marketplace add <this repository>
+codex plugin marketplace add EverMind-AI/Plugins
 codex plugin add everos@everos
 ```
 
