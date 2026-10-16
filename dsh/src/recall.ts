@@ -4,6 +4,7 @@ import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 
+import { sessionEvents } from './compat.js'
 import type { ResolvedConfig } from './config.js'
 import type { EverosClient } from './everos-client.js'
 import { agentIdOf, projectIdOf } from './identity.js'
@@ -61,7 +62,7 @@ function clipHead(text: string, maxChars: number): string {
 }
 
 function recentDirectUserMessages(session: Session): UserMessage[] {
-  return session.events.flatMap((event) => {
+  return sessionEvents(session).flatMap((event) => {
     if (event.type !== 'user/message' || !isDirectUserMessage(event.data)) return []
     return [event.data]
   })

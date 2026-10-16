@@ -112,6 +112,75 @@ test('token estimate treats CJK more conservatively than ASCII', () => {
   assert.equal(estimateMessageTokens({ ...base, content: '请记住这个偏好' }), 7)
 })
 
+/**
+ * The DSH 0.2.x session shape: the `events` accessor is gone, replaced by
+ * `snapshotEvents()`. A build that reads only `session.events` throws
+ * `TypeError: session.events is not iterable` on this object.
+ */
+function fakeSnapshotSession(): Session {
+  const session = fakeSession() as unknown as Record<string, unknown>
+  const events = session.events
+  delete session.events
+  session.snapshotEvents = () => events
+  return session as unknown as Session
+}
+
+test('reads the event log through the 0.2.x snapshotEvents accessor', () => {
+  const legacy = captureMessagesSince(fakeSession(), -1, 'alice', undefined, 10_000)
+  const current = captureMessagesSince(fakeSnapshotSession(), -1, 'alice', undefined, 10_000)
+
+  assert.equal(current.messages.length, 3)
+  assert.deepEqual(current, legacy)
+})
+
+test('maps the 0.2.x tool-role result message with no tool-result content block', () => {
+  const session = fakeSession() as unknown as { events: unknown[] }
+  session.events.push(
+    {
+      type: 'tool/call',
+      seq: 5,
+      time: 15,
+      data: { turn: 1, step: 2, callId: 'call-2', name: 'write_file', arguments: '{}' },
+    },
+    {
+      type: 'tool/result',
+      seq: 6,
+      time: 16,
+      data: {
+        turn: 1,
+        step: 2,
+        message: {
+          id: 't2',
+          // 0.2 made the tool result a first-class `tool` role carrying the
+          // correlation and error flag itself, instead of a `user`-role message
+          // whose content[0] was a `tool-result` block.
+          role: 'tool',
+          source: { kind: 'tool', callId: 'call-2' },
+          toolCallId: 'call-2',
+          isError: true,
+          content: [{ type: 'text', text: 'ENOENT: missing file' }],
+        },
+      },
+    },
+  )
+
+  const capture = captureMessagesSince(
+    session as unknown as Session,
+    -1,
+    'alice',
+    undefined,
+    10_000,
+  )
+  const tool = capture.messages.at(-1)
+
+  assert.equal(tool?.item.role, 'tool')
+  assert.equal(tool?.item.tool_call_id, 'call-2')
+  assert.equal(tool?.item.sender_name, 'write_file')
+  const content = String(tool?.item.content ?? '')
+  assert.match(content, /^\[tool error\]/u)
+  assert.match(content, /ENOENT: missing file/u)
+})
+
 test('runtime captures incrementally and seals after the pending queue', async () => {
   const adds: AddRequest[] = []
   const flushes: FlushRequest[] = []

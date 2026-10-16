@@ -3,6 +3,7 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 
+import { sessionEvents, toolResultFields } from './compat.js'
 import { agentIdOf } from './identity.js'
 import { blocksToText, isDirectUserMessage } from './recall.js'
 import type { MessageItem, ToolCall } from './types.js'
@@ -50,7 +51,7 @@ function toolCalls(blocks: readonly ContentBlock[], maxChars: number): ToolCall[
 
 function toolNameIndex(session: Session): Map<string, string> {
   const names = new Map<string, string>()
-  for (const event of session.events) {
+  for (const event of sessionEvents(session)) {
     if (event.type === 'tool/call') names.set(String(event.data.callId), event.data.name)
   }
   return names
@@ -75,7 +76,7 @@ export function captureMessagesSince(
   const output: CapturedMessage[] = []
   let scannedThroughSeq = afterSeq
 
-  for (const event of session.events) {
+  for (const event of sessionEvents(session)) {
     if (event.seq <= afterSeq) continue
     scannedThroughSeq = Math.max(scannedThroughSeq, event.seq)
     const timestamp = Number.isSafeInteger(event.time) && event.time > 0 ? event.time : Date.now()
@@ -118,10 +119,9 @@ export function captureMessagesSince(
 
       case 'tool/result': {
         const message = event.data.message
-        const block = message.content[0]
-        const callId = String(block.toolCallId)
-        const resultText = blocksToText(block.content)
-        const status = block.isError || event.data.error ? '[tool error]\n' : ''
+        const { callId, isError, blocks } = toolResultFields(message)
+        const resultText = blocksToText(blocks)
+        const status = isError || event.data.error ? '[tool error]\n' : ''
         const content = clipText(`${status}${resultText}`, maxChars).trim() || '[empty tool result]'
         output.push({
           seq: event.seq,

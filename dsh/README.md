@@ -20,7 +20,10 @@ turn.
 ## Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.0-rc.6` or newer within the `0.1.x` line
+- DeepSeek Harness `0.1.0-rc.6` or newer within the `0.1.x` or `0.2.x` line. The
+  `0.2.x` line removed the `Session.events` accessor and moved the tool-result
+  correlation and error flag off the `tool-result` content block; the plugin reads
+  both shapes, so one build serves either line.
 - EverOS installed and initialized
 
 ```bash
