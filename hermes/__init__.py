@@ -22,7 +22,13 @@ from typing import Any
 from unicodedata import east_asian_width
 
 from .client import ADD_MAX_MESSAGES, EverosClient, EverosError
-from .provision import provision, stop_child
+# NOTE: ``hermes/plugins/plugin_loader.py`` binds every sibling submodule onto
+# the package *after* exec'ing it (setattr(mod, 'provision', <module>)), which
+# shadows a same-named imported function — provisioning then dies with
+# "TypeError: 'module' object is not callable". Go through an alias that the
+# loader never overwrites.
+from . import provision as _provision_mod
+from .provision import stop_child
 
 try:  # the real ABC exists inside a Hermes runtime
     from agent.memory_provider import MemoryProvider
@@ -123,9 +129,23 @@ class Config:
         self.query_max_units: int = _int_or(
             values.get("query_max_units"), DEFAULTS["query_max_units"]
         )
+        # Explicit scope overrides. Without these the project scope is derived
+        # from the profile dir name (path_safe_project_id), which is a *different*
+        # partition than anything written by an external importer — recall would
+        # then silently return nothing.
+        self.project_id: str | None = (
+            assert_safe_scope(s("project_id")) if s("project_id") else None
+        )
         self.everos_dir: str | None = s("everos_dir")
         raw_cmd = s("start_cmd")
         self.start_cmd: list[str] | None = split_command(raw_cmd) if raw_cmd else None
+
+
+def assert_safe_scope(value: str) -> str:
+    """EverOS ``PathSafeId``: ``^[a-zA-Z0-9_.-]+$``, never ``.``/``..``, <= 128 chars."""
+    if value in (".", "..") or not re.fullmatch(r"[a-zA-Z0-9_.-]+", value or ""):
+        raise ValueError(f"invalid project_id: {value!r}")
+    return value[:SCOPE_MAX]
 
 
 def _os_user() -> str | None:
@@ -473,13 +493,13 @@ class EverosMemoryProvider(MemoryProvider):
             self._cfg = load_config(self._home)
         except Exception:  # a hostile config file must not break agent startup
             self._cfg = Config({})
-        self._project = path_safe_project_id(self._home)
+        self._project = self._cfg.project_id or path_safe_project_id(self._home)
         self._client = EverosClient(self._cfg.base_url)
 
         client, cfg = self._client, self._cfg
 
         def _provision() -> None:
-            result = provision(client, cfg.start_cmd, cfg.everos_dir)
+            result = _provision_mod.provision(client, cfg.start_cmd, cfg.everos_dir)
             # Keep ANY child we spawned — including "readiness timeout (left
             # running)" — so shutdown can stop it; an untracked slow starter
             # would outlive Hermes holding the OME lock. On a re-init that
@@ -775,12 +795,12 @@ class EverosMemoryProvider(MemoryProvider):
 
 def register(ctx: Any) -> None:
     ctx.register_memory_provider(EverosMemoryProvider())
-    if hasattr(ctx, "register_cli_command"):  # optional nicety; older hosts lack it
-        from .cli import run_status, setup_cli
-
-        ctx.register_cli_command(
-            "everos",
-            "EverOS memory provider utilities",
-            setup_cli,
-            handler_fn=run_status,
-        )
+    # NOTE: do NOT register a ``hermes everos`` CLI command here.
+    # ``hermes_cli/plugins.py::register_cli_command`` records whatever ``setup_fn`` /
+    # ``handler_fn`` it is handed, and the host calls the latter with the parsed
+    # args. Our handlers take ``args=None`` and are documented as ``hermes everos
+    # [status]``, but ``discover_plugin_cli_commands()`` looks for a
+    # ``register_cli(subparser)`` + ``<name>_command`` pair (the honcho convention),
+    # which cli.py does not define — so the subcommand never actually appears and
+    # any future host change would call run_status() with the wrong argument.
+    # The status probe lives in cli.py and stays reachable by direct invocation.
