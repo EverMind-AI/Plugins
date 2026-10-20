@@ -1,0 +1,44 @@
+name: Pi plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pi/**"
+      - ".github/workflows/pi.yml"
+  pull_request:
+    paths:
+      - "pi/**"
+      - ".github/workflows/pi.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.19.0", "22.22.3"]
+    defaults:
+      run:
+        working-directory: pi
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Run tests
+        run: npm test

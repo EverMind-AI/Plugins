@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Chasen-Liao/pi-everos/schemas/everos.schema.json",
+  "title": "pi-everos settings",
+  "description": "Settings for the EverOS Pi package. Never store EVEROS_API_KEY here.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "When false, do not register MCP or inject the memory protocol."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["uvx"],
+      "default": "uvx",
+      "description": "v1 only implements uvx. oauth is reserved."
+    },
+    "userId": {
+      "type": "string",
+      "default": "default-user",
+      "description": "EVEROS_USER_ID"
+    },
+    "appId": {
+      "type": "string",
+      "default": "pi",
+      "description": "EVEROS_APP_ID"
+    },
+    "projectId": {
+      "type": "string",
+      "default": "auto",
+      "description": "EVEROS_PROJECT_ID, or auto from the workspace directory name"
+    },
+    "globalProjectId": {
+      "type": "string",
+      "default": "global",
+      "description": "EVEROS_PROJECT_ID for the global memory connection"
+    },
+    "assistantSenderId": {
+      "type": "string",
+      "description": "EVEROS_ASSISTANT_SENDER_ID for cases and skills. Omit to use assistant-<userId>. Changing this hides experience stored under the previous id."
+    },
+    "prompt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "maxTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2000,
+          "default": 200
+        },
+        "customText": {
+          "type": "string",
+          "description": "Optional replacement for the user-memory protocol only. Still clipped by maxTokens. Does not replace the agent-experience section. Never put secrets here."
+        }
+      }
+    }
+  }
+}
