@@ -1,0 +1,7 @@
+{
+  "name": "sandbox-demo-project",
+  "version": "1.0.0",
+  "description": "Clean isolated sandbox for EverOS Antigravity plugin live verification",
+  "main": "src/index.js",
+  "type": "module"
+}
