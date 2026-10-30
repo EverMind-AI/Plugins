@@ -1,14 +1,16 @@
 /** Durable capture plus adaptive, batched extraction over the EverOS client. */
 
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
-import { captureMessagesSince } from './capture.js'
+import { mapSessionEvent, rememberToolCall } from './capture.js'
 import type { ResolvedConfig } from './config.js'
 import type { EverosClient } from './everos-client.js'
-import { projectIdOf, sessionIdOf } from './identity.js'
+import { agentIdOf, projectIdOf, sessionIdOf } from './identity.js'
 import type { FlushResponse, MessageItem, PluginLogger } from './types.js'
 
 const ADD_MAX_MESSAGES = 500
+const RECENT_USER_LIMIT = 16
 
 type FlushReason =
   | 'idle'
@@ -19,7 +21,9 @@ type FlushReason =
   | 'shutdown'
 
 interface SessionState {
-  cursor: number
+  buffer: MessageItem[]
+  recentUserMessages: UserMessage[]
+  toolNames: Map<string, string>
   pendingMessages: number
   pendingTokens: number
   firstPendingAt?: number
@@ -67,13 +71,45 @@ export class MemoryRuntime {
     let state = this.states.get(id)
     if (!state) {
       state = {
-        cursor: session.firstLiveSeq - 1,
+        buffer: [],
+        recentUserMessages: [],
+        toolNames: new Map(),
         pendingMessages: 0,
         pendingTokens: 0,
       }
       this.states.set(id, state)
     }
     return state
+  }
+
+  /**
+   * Record one live committed session event. The host publishes `session/event`
+   * after commit, so capture follows the durable log instead of rescanning it.
+   */
+  feed(session: Session, event: SessionEvent): void {
+    const state = this.remember(session)
+    rememberToolCall(event, state.toolNames)
+    if (event.type === 'user/message' && event.data.source.kind === 'user') {
+      state.recentUserMessages.push(event.data)
+      if (state.recentUserMessages.length > RECENT_USER_LIMIT) {
+        state.recentUserMessages.shift()
+      }
+    }
+    const item = mapSessionEvent(
+      event,
+      {
+        userId: this.options.userId,
+        agentId: agentIdOf(session, this.options.config.agentId),
+        toolNames: state.toolNames,
+      },
+      this.options.config.captureMaxChars,
+    )
+    if (item) state.buffer.push(item)
+  }
+
+  /** Recent direct user messages used to widen the next recall query. */
+  recentUserMessages(session: Session): readonly UserMessage[] {
+    return this.remember(session).recentUserMessages
   }
 
   /** A new user turn cancels the idle timer while preserving the max-age guard. */
@@ -105,38 +141,35 @@ export class MemoryRuntime {
   private async captureNow(session: Session): Promise<SessionState> {
     const state = this.remember(session)
     const id = sessionIdOf(session)
-    const slice = captureMessagesSince(
-      session,
-      state.cursor,
-      this.options.userId,
-      this.options.config.agentId,
-      this.options.config.captureMaxChars,
-    )
     const projectId = projectIdOf(session, this.options.config.projectId)
-    for (let index = 0; index < slice.messages.length; index += ADD_MAX_MESSAGES) {
-      const batch = slice.messages.slice(index, index + ADD_MAX_MESSAGES)
-      await this.options.client.add(
-        {
-          session_id: id,
-          app_id: this.options.config.appId,
-          project_id: projectId,
-          messages: batch.map((entry) => entry.item),
-          defer_extraction: true,
-        },
-        { timeoutMs: this.options.config.captureTimeoutMs },
-      )
-      const last = batch.at(-1)
-      if (last) state.cursor = last.seq
-      if (batch.length > 0) {
+    const pending = state.buffer.splice(0, state.buffer.length)
+    let index = 0
+    try {
+      while (index < pending.length) {
+        const batch = pending.slice(index, index + ADD_MAX_MESSAGES)
+        await this.options.client.add(
+          {
+            session_id: id,
+            app_id: this.options.config.appId,
+            project_id: projectId,
+            messages: batch,
+            defer_extraction: true,
+          },
+          { timeoutMs: this.options.config.captureTimeoutMs },
+        )
+        index += batch.length
         state.firstPendingAt ??= Date.now()
         state.pendingMessages += batch.length
         state.pendingTokens += batch.reduce(
-          (total, entry) => total + estimateMessageTokens(entry.item),
+          (total, message) => total + estimateMessageTokens(message),
           0,
         )
       }
+    } catch (error) {
+      // Put unacknowledged messages back so a later turn retries them.
+      state.buffer.unshift(...pending.slice(index))
+      throw error
     }
-    state.cursor = Math.max(state.cursor, slice.scannedThroughSeq)
     return state
   }
 
@@ -230,7 +263,7 @@ export class MemoryRuntime {
       if (
         id === currentId ||
         !state ||
-        state.pendingMessages === 0 ||
+        (state.pendingMessages === 0 && state.buffer.length === 0) ||
         projectIdOf(session, this.options.config.projectId) !== currentProject
       ) {
         return []
@@ -271,6 +304,7 @@ export class MemoryRuntime {
 
   /** Seal every observed session and wait for already-started background work. */
   async dispose(): Promise<void> {
+    for (const state of this.states.values()) this.clearTimers(state)
     const sealing = [...this.sessions.values()].map((session) =>
       this.seal(session, 'shutdown').catch((error: unknown) => {
         this.options.logger.warn(`everos-memory: shutdown seal failed (ignored): ${String(error)}`)

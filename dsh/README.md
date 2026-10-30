@@ -20,7 +20,7 @@ turn.
 ## Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.0-rc.6` or newer within the `0.1.x` line
+- DeepSeek Harness `0.2.1-rc.5` or newer within the `0.2.x` line
 - EverOS installed and initialized
 
 ```bash
@@ -28,11 +28,8 @@ uv tool install everos
 everos init
 ```
 
-EverOS 1.2.3 supports the plugin's LLM-only Tier 1 path with keyword recall. Deferred
-capture batching additionally requires an EverOS build that supports
-`defer_extraction`; until that capability is included in a tagged release, install
-EverOS from the EverOS repository's `main` branch. With 1.2.3, capture remains functional,
-but `/add` uses the eager boundary and extraction path.
+EverOS 1.5.1 supports `defer_extraction`, so deferred capture batching works on a
+released build. Install the current release with `uv tool install everos`.
 
 Embedding, rerank, and multimodal credentials are optional. EverOS owns provider and
 storage configuration; this plugin does not accept or store API keys.
@@ -50,6 +47,23 @@ everos server start
 The generated `~/.everos/everos.toml` already contains the default OpenRouter model and
 base URL. Keep secrets out of the repository and use your normal secret manager for
 persistent setup.
+
+## Upgrading from 0.1.x
+
+Version 0.2.0 targets DeepSeek Harness `0.2.x` only. It follows the host APIs that
+replaced the 0.1.x surface:
+
+- install/activation: declares `engines.dsh: ">=0.2.1-rc.5 <0.3.0-0"` and 0.2 peer ranges;
+- capture: follows the committed `session/event` feed instead of reading `Session.events`,
+  which 0.2 removed (the old code threw and the fail-open path swallowed it, so memory
+  silently stopped);
+- recall: reads recent direct user messages from the runtime buffer, not the session log;
+- provenance: declares its own `everos-memory` message source; 0.2 removed the shared
+  `plugin` kind;
+- tool results: reads the 0.2 tool-role message (`message.toolCallId`, flat content blocks);
+- pre-step: spreads the host decision so `startsRequestSeries` survives.
+
+Upgrade EverOS to 1.5.1 or newer, then restart DSH after installing this version.
 
 ## Install
 
@@ -161,7 +175,7 @@ All derived identifiers are deterministic and path-safe.
 Recall is injected with DSH provenance:
 
 ```text
-{ kind: "plugin", plugin: "everos-memory", form: "recall" }
+{ kind: "everos-memory", form: "recall" }
 ```
 
 Recalled content is fenced as untrusted historical evidence. Stored fence tokens are
@@ -175,7 +189,7 @@ Capture includes:
 - visible assistant text;
 - assistant tool calls with raw JSON arguments;
 - tool results linked by call id;
-- safe image metadata such as media type and dimensions.
+- image and file placeholders (no bytes, paths, or attachment ids).
 
 Raw model reasoning and image bytes are intentionally excluded. DSH attachment ids are
 opaque and are not treated as file paths or bearer URLs.
@@ -183,17 +197,14 @@ opaque and are not treated as file paths or bearer URLs.
 ## Operational behavior
 
 - Writes are serialized per DSH session.
+- Capture follows the committed `session/event` feed, so only new live events are
+  ingested and no per-turn log rescan is needed. On a resumed session the historical
+  seed events never publish, so they are not re-ingested.
 - Capture uses `defer_extraction: true`: raw turns are durable immediately, while the
-  expensive boundary and memory LLM work is batched. An EverOS build with
-  `defer_extraction` support is required for this optimization; EverOS 1.2.3 ignores the
-  request field and retains its eager `/add` behavior.
+  expensive boundary and memory LLM work is batched.
 - Starting a new DSH session establishes a read-after-write barrier for other pending
   sessions in the same workspace, so the first recall sees the latest committed memory.
-- A cursor based on DSH event sequence numbers captures only new live events, including
-  additional steps in the same turn.
 - Add requests are split at EverOS's 500-message API limit.
-- A resumed DSH session starts capture at `Session.firstLiveSeq`; historical seed events
-  are not re-ingested.
 - Auto-start never invokes a shell and is restricted to loopback URLs. A process started
   by the plugin is stopped during plugin disposal; an existing EverOS process is not.
 - If another EverOS process owns the OME lock, the plugin keeps polling and connects to
@@ -216,7 +227,7 @@ authority.
 
 ```bash
 npm ci
-npm run ci                     # lint + typecheck + 20 unit tests + build
+npm run ci                     # lint + typecheck + 21 unit tests + build
 ./scripts/e2e-everos.sh        # the PACKED artifact against a REAL EverOS
 ```
 
@@ -249,3 +260,4 @@ DSH_E2E_SOURCE_CONFIG=~/.everos/everos.toml ./scripts/e2e-everos.sh
   per turn, is taken from the host's declared types rather than observed in a real run.
 - Every failure path fails open into `logger.warn`. Memory stopping is not otherwise
   visible to the user.
+

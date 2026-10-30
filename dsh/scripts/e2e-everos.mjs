@@ -1,20 +1,22 @@
-// One DSH session against a real EverOS, driven through real cordis.
+// One DSH 0.2 session against an EverOS endpoint, driven through real cordis.
 //
 // The plugin under test is the PACKED artifact installed into node_modules,
 // not ../src: what npm would ship is what this runs. The Session is a real
-// @deepseek-ai/dsh-session Session and the three lifecycle points are dispatched
+// @deepseek-ai/dsh-session Session and the lifecycle points are dispatched
 // through real cordis events, so nothing here defines the host's shapes for it.
 //
 //   node e2e-everos.mjs store   - state a fact, capture the turn, seal
 //   node e2e-everos.mjs recall  - fresh session, ask for it back
 import { Context } from '@deepseek-ai/cordis'
-import { SessionStore, SessionId } from '@deepseek-ai/dsh-session'
-import { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
 import * as everosPlugin from '@everos-ai/dsh-plugin'
 
 const BASE = process.env.DSH_E2E_BASE ?? 'http://127.0.0.1:8892'
 const USER = process.env.DSH_E2E_USER ?? 'dsh_e2e_user'
-const CWD = process.env.DSH_E2E_CWD ?? '/work/dsh-e2e-project'
+// DSH validates the header cwd as an absolute path; use the real working
+// directory instead of a POSIX-only placeholder.
+const CWD = process.env.DSH_E2E_CWD ?? process.cwd()
 const FACT = process.env.DSH_E2E_FACT ?? 'the staging cluster deploy key is rotated every Tuesday, and Ops owns that rotation'
 const PHASE = process.argv[2] ?? 'store'
 
@@ -36,9 +38,7 @@ const prompt =
   PHASE === 'store'
     ? `Remember this: ${FACT}.`
     : 'Who owns the staging deploy key rotation, and on which day?'
-// payload.messages is UserMessage[] by the host's contract. Do not pass
-// session.deriveMessages(): that is Message[], and its assistant entries carry
-// no `source`, which is not what this hook is handed.
+// payload.messages is UserMessage[] by the host's contract.
 const first = { id: 'u1', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: prompt }] }
 
 session.append('turn/start', { turn: 1 })
@@ -58,12 +58,20 @@ if (injected > 0) console.log(`INJECTED_TEXT=${JSON.stringify(decision.messages.
 
 session.append(
   'assistant/message',
-  { turn: 1, step: 1,
-    message: { id: 'a1', role: 'assistant', source: { kind: 'model' },
-      content: [{ type: 'text', text: PHASE === 'store' ? 'Understood.' : 'Answering.' }] } },
+  {
+    turn: 1,
+    step: 1,
+    stream: [],
+    message: {
+      id: 'a1',
+      role: 'assistant',
+      source: { kind: 'model', provider: 'mock', model: 'mock' },
+      content: [{ type: 'text', text: PHASE === 'store' ? 'Understood.' : 'Answering.' }],
+    },
+  },
   { surfaceOp: 'append' },
 )
-session.append('turn/end', { turn: 1, reason: 'completed' })
+session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
 
 await ctx.events.serial('agent/turn-stopping', { agent, turn: 1, signal })
 leave()

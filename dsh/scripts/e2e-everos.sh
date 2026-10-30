@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end acceptance for the DSH plugin against a REAL EverOS.
 #
-# `npm test` runs 20 unit tests whose EverOS is a hand-written fakeFetch and
+# `npm test` runs 21 unit tests whose EverOS is a hand-written fakeFetch and
 # whose Session is a hand-written object literal. Both define the host's shapes
 # for themselves, so neither can tell you the plugin works against the real
 # ones. This installs what npm would SHIP into a project that has DSH at its
@@ -87,7 +87,8 @@ step "2. Install the packed plugin next to DSH at its published versions"
 mkdir -p "$PROJECT"
 printf '{"name":"dsh-e2e","version":"1.0.0","private":true,"type":"module"}\n' > "$PROJECT/package.json"
 ( cd "$PROJECT" && npm install --silent \
-    @deepseek-ai/cordis @deepseek-ai/dsh-agent @deepseek-ai/dsh-llm @deepseek-ai/dsh-session ) >"$WORK/npm.log" 2>&1 \
+    @deepseek-ai/cordis@4.0.5 @deepseek-ai/dsh-agent@0.2.1-rc.5 \
+    @deepseek-ai/dsh-llm@0.2.1-rc.5 @deepseek-ai/dsh-session@0.2.1-rc.5 ) >"$WORK/npm.log" 2>&1 \
   || { bad "installing DSH failed"; tail -15 "$WORK/npm.log"; exit 1; }
 TARBALL=$( cd "$PKG" && npm pack --pack-destination "$WORK" 2>/dev/null | tail -1 )
 [ -f "$WORK/$TARBALL" ] || { bad "npm pack produced nothing"; exit 1; }
@@ -150,3 +151,4 @@ printf '  %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -gt 0 ] && exit 1
 printf '  ALL CHECKS PASSED\n'
 exit 0
+

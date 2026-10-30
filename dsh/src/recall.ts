@@ -1,12 +1,13 @@
 /** Recall query construction and safe model-context rendering. */
 
-import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-
 import type { ResolvedConfig } from './config.js'
+import { blocksToText } from './content.js'
 import type { EverosClient } from './everos-client.js'
 import { agentIdOf, projectIdOf } from './identity.js'
+import { MEMORY_SOURCE_KIND } from './source.js'
 import type {
   PluginLogger,
   SearchAgentCase,
@@ -20,38 +21,6 @@ export const PLUGIN_NAME = 'everos-memory'
 const MEMORY_OPEN = '<everos_memory>'
 const MEMORY_CLOSE = '</everos_memory>'
 
-function imageLabel(block: Extract<ContentBlock, { type: 'image' }>): string {
-  const attachment = block.attachment
-  const name = attachment.name ? ` ${attachment.name}` : ''
-  return `[image${name}: ${attachment.mediaType}, ${attachment.width}x${attachment.height}]`
-}
-
-/** Convert model-visible content to recall/capture text without exposing attachment paths. */
-export function blocksToText(blocks: readonly ContentBlock[], includeReasoning = false): string {
-  const parts: string[] = []
-  for (const block of blocks) {
-    switch (block.type) {
-      case 'text':
-        parts.push(block.text)
-        break
-      case 'reasoning':
-        if (includeReasoning) parts.push(`[reasoning]\n${block.text}`)
-        break
-      case 'image':
-        parts.push(imageLabel(block))
-        break
-      case 'tool-call':
-        break
-      case 'tool-result':
-        parts.push(blocksToText(block.content, includeReasoning))
-        break
-      default:
-        break
-    }
-  }
-  return parts.filter(Boolean).join('\n').trim()
-}
-
 export function isDirectUserMessage(message: UserMessage): boolean {
   return message.source.kind === 'user'
 }
@@ -60,17 +29,10 @@ function clipHead(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : text.slice(0, maxChars)
 }
 
-function recentDirectUserMessages(session: Session): UserMessage[] {
-  return session.events.flatMap((event) => {
-    if (event.type !== 'user/message' || !isDirectUserMessage(event.data)) return []
-    return [event.data]
-  })
-}
-
 /** Keep the current prompt dominant, then spend any remaining budget on recent history. */
 export function buildRecallQuery(
-  session: Session,
   proposed: readonly UserMessage[],
+  recent: readonly UserMessage[],
   queryN: number,
   maxChars: number,
 ): string {
@@ -85,7 +47,8 @@ export function buildRecallQuery(
   if (!current) return ''
 
   const currentIds = new Set(currentMessages.map((message) => String(message.id)))
-  const history = recentDirectUserMessages(session)
+  const history = recent
+    .filter(isDirectUserMessage)
     .filter((message) => !currentIds.has(String(message.id)))
     .slice(-Math.max(0, queryN - currentMessages.length))
     .map((message) => blocksToText(message.content))
@@ -164,12 +127,21 @@ export function renderMemory(
   return `${header}${body}${footer}`
 }
 
+/** Append recalled context without dropping decision fields the host relies on. */
+export function withRecall<D extends { messages: readonly UserMessage[] }>(
+  decision: D,
+  recalled: UserMessage,
+): D {
+  return { ...decision, messages: [...decision.messages, recalled] }
+}
+
 export interface RecallOptions {
   client: EverosClient
   config: ResolvedConfig
   userId: string
   session: Session
   messages: readonly UserMessage[]
+  recentUserMessages: readonly UserMessage[]
   signal: AbortSignal
   logger: PluginLogger
 }
@@ -177,8 +149,8 @@ export interface RecallOptions {
 /** Search user and agent tracks independently; either may fail without blocking the step. */
 export async function recallMessage(options: RecallOptions): Promise<UserMessage | undefined> {
   const query = buildRecallQuery(
-    options.session,
     options.messages,
+    options.recentUserMessages,
     options.config.queryN,
     options.config.queryMaxChars,
   )
@@ -218,6 +190,6 @@ export async function recallMessage(options: RecallOptions): Promise<UserMessage
   if (!text) return undefined
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN_NAME, form: 'recall' },
+    source: { kind: MEMORY_SOURCE_KIND, form: 'recall' },
   })
 }

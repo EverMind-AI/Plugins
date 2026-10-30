@@ -1,20 +1,15 @@
-/** Lossless-enough DSH event mapping for EverOS user and agent extraction. */
+/** Lossless-enough DSH 0.2 event mapping for EverOS user and agent extraction. */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
 
-import { agentIdOf } from './identity.js'
-import { blocksToText, isDirectUserMessage } from './recall.js'
+import { blocksToText } from './content.js'
 import type { MessageItem, ToolCall } from './types.js'
 
-export interface CapturedMessage {
-  seq: number
-  item: MessageItem
-}
-
-export interface CaptureSlice {
-  messages: CapturedMessage[]
-  scannedThroughSeq: number
+export interface CaptureContext {
+  userId: string
+  agentId: string
+  toolNames: ReadonlyMap<string, string>
 }
 
 function clipText(text: string, maxChars: number): string {
@@ -48,99 +43,72 @@ function toolCalls(blocks: readonly ContentBlock[], maxChars: number): ToolCall[
   return calls.length === 0 ? undefined : calls
 }
 
-function toolNameIndex(session: Session): Map<string, string> {
-  const names = new Map<string, string>()
-  for (const event of session.events) {
-    if (event.type === 'tool/call') names.set(String(event.data.callId), event.data.name)
-  }
-  return names
+/** Record a tool name so its later result can be attributed. */
+export function rememberToolCall(event: SessionEvent, toolNames: Map<string, string>): void {
+  if (event.type !== 'tool/call') return
+  toolNames.set(String(event.data.callId), event.data.name)
 }
 
 /**
- * Convert new model-visible events after `afterSeq`.
+ * Map one live DSH 0.2 session event to an EverOS message.
  *
  * Raw reasoning chunks and plugin-injected context are intentionally excluded.
  * Assistant tool calls and tool results are retained because EverOS uses them to
  * extract reusable agent cases and skills.
  */
-export function captureMessagesSince(
-  session: Session,
-  afterSeq: number,
-  userId: string,
-  configuredAgentId: string | undefined,
+export function mapSessionEvent(
+  event: SessionEvent,
+  context: CaptureContext,
   maxChars: number,
-): CaptureSlice {
-  const agentId = agentIdOf(session, configuredAgentId)
-  const names = toolNameIndex(session)
-  const output: CapturedMessage[] = []
-  let scannedThroughSeq = afterSeq
+): MessageItem | undefined {
+  const timestamp = Number.isSafeInteger(event.time) && event.time > 0 ? event.time : Date.now()
 
-  for (const event of session.events) {
-    if (event.seq <= afterSeq) continue
-    scannedThroughSeq = Math.max(scannedThroughSeq, event.seq)
-    const timestamp = Number.isSafeInteger(event.time) && event.time > 0 ? event.time : Date.now()
-
-    switch (event.type) {
-      case 'user/message': {
-        if (!isDirectUserMessage(event.data)) break
-        const content = clipText(blocksToText(event.data.content), maxChars)
-        if (!content) break
-        output.push({
-          seq: event.seq,
-          item: {
-            sender_id: userId,
-            role: 'user',
-            timestamp,
-            content,
-          },
-        })
-        break
+  switch (event.type) {
+    case 'user/message': {
+      if (event.data.source.kind !== 'user') return undefined
+      const content = clipText(blocksToText(event.data.content), maxChars)
+      if (!content) return undefined
+      return {
+        sender_id: context.userId,
+        role: 'user',
+        timestamp,
+        content,
       }
-
-      case 'assistant/message': {
-        const message = event.data.message
-        const calls = toolCalls(message.content, maxChars)
-        const content = clipText(blocksToText(message.content), maxChars)
-        if (!content && !calls) break
-        output.push({
-          seq: event.seq,
-          item: {
-            sender_id: agentId,
-            sender_name: `${message.source.provider}/${message.source.model}`,
-            role: 'assistant',
-            timestamp,
-            content,
-            ...(calls ? { tool_calls: calls } : {}),
-          },
-        })
-        break
-      }
-
-      case 'tool/result': {
-        const message = event.data.message
-        const block = message.content[0]
-        const callId = String(block.toolCallId)
-        const resultText = blocksToText(block.content)
-        const status = block.isError || event.data.error ? '[tool error]\n' : ''
-        const content = clipText(`${status}${resultText}`, maxChars).trim() || '[empty tool result]'
-        output.push({
-          seq: event.seq,
-          item: {
-            sender_id: agentId,
-            sender_name: names.get(callId) ?? 'tool',
-            role: 'tool',
-            timestamp,
-            content,
-            tool_call_id: callId,
-          },
-        })
-        break
-      }
-
-      default:
-        break
     }
-  }
 
-  return { messages: output, scannedThroughSeq }
+    case 'assistant/message': {
+      const message = event.data.message
+      const calls = toolCalls(message.content, maxChars)
+      const content = clipText(blocksToText(message.content), maxChars)
+      if (!content && !calls) return undefined
+      return {
+        sender_id: context.agentId,
+        sender_name: `${message.source.provider}/${message.source.model}`,
+        role: 'assistant',
+        timestamp,
+        content,
+        ...(calls ? { tool_calls: calls } : {}),
+      }
+    }
+
+    case 'tool/result': {
+      const message = event.data.message
+      const callId = String(message.toolCallId)
+      const status = message.isError || event.data.error ? '[tool error]\n' : ''
+      const content =
+        clipText(`${status}${blocksToText(message.content)}`, maxChars).trim() ||
+        '[empty tool result]'
+      return {
+        sender_id: context.agentId,
+        sender_name: context.toolNames.get(callId) ?? 'tool',
+        role: 'tool',
+        timestamp,
+        content,
+        tool_call_id: callId,
+      }
+    }
+
+    default:
+      return undefined
+  }
 }

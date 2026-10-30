@@ -9,7 +9,7 @@ import { createEverosClient } from './everos-client.js'
 import { resolveUserId } from './identity.js'
 import { MemoryRuntime } from './memory-runtime.js'
 import { type ProvisionResult, provision } from './provision.js'
-import { PLUGIN_NAME, recallMessage } from './recall.js'
+import { PLUGIN_NAME, recallMessage, withRecall } from './recall.js'
 import type { PluginLogger } from './types.js'
 
 export const name = PLUGIN_NAME
@@ -31,6 +31,16 @@ export function apply(ctx: Context, input: PluginConfig): void {
   })
   const runtime = new MemoryRuntime({ client, config, userId, logger })
 
+  // DSH 0.2 publishes every committed session event here; capture follows the
+  // durable log incrementally instead of rescanning it each turn.
+  ctx.on('session/event', (session, event) => {
+    try {
+      runtime.feed(session, event)
+    } catch (error) {
+      logger.warn(`everos-memory: event capture failed open: ${String(error)}`)
+    }
+  })
+
   ctx.on(
     'agent/pre-step',
     async ({ agent, signal, step }, next): Promise<PreStepDecision> => {
@@ -49,11 +59,12 @@ export function apply(ctx: Context, input: PluginConfig): void {
           userId,
           session: agent.session,
           messages: decision.messages,
+          recentUserMessages: runtime.recentUserMessages(agent.session),
           signal,
           logger,
         })
         if (!recalled) return decision
-        return { kind: 'enter', messages: [...decision.messages, recalled] }
+        return withRecall(decision, recalled)
       } catch (error) {
         logger.warn(`everos-memory: recall failed open: ${String(error)}`)
         return decision
