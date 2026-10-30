@@ -20,7 +20,7 @@ turn.
 ## Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.2.1-rc.3` or newer within the `0.2.x` line
+- DeepSeek Harness `0.2.1-rc.5` or newer within the `0.2.x` line
 - EverOS installed and initialized
 
 ```bash
@@ -53,7 +53,7 @@ persistent setup.
 Version 0.2.0 targets DeepSeek Harness `0.2.x` only. It follows the host APIs that
 replaced the 0.1.x surface:
 
-- install/activation: declares `engines.dsh: ">=0.2.1-rc.3 <0.3.0-0"` and 0.2 peer ranges;
+- install/activation: declares `engines.dsh: ">=0.2.1-rc.5 <0.3.0-0"` and 0.2 peer ranges;
 - capture: follows the committed `session/event` feed instead of reading `Session.events`,
   which 0.2 removed (the old code threw and the fail-open path swallowed it, so memory
   silently stopped);
@@ -260,3 +260,4 @@ DSH_E2E_SOURCE_CONFIG=~/.everos/everos.toml ./scripts/e2e-everos.sh
   per turn, is taken from the host's declared types rather than observed in a real run.
 - Every failure path fails open into `logger.warn`. Memory stopping is not otherwise
   visible to the user.
+
