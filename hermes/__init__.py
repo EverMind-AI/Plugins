@@ -14,6 +14,7 @@ import getpass
 import hashlib
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -41,11 +42,62 @@ RECALL_TIMEOUT_S = 5.0  # per-search cap; recall fail-opens past it
 DEFAULTS: dict[str, Any] = {
     "base_url": "http://127.0.0.1:8000",
     "agent_id": "hermes",
+    "recall_app_id": "hermes",
+    "augment_cwd": True,
+    "enable_tools": False,
+    "probe_health_on_available": False,
     "query_max_units": 500,
 }
 
 _SCHEME_RE = re.compile(r"^https?://", re.I)
 _OWNER_ID_RE = re.compile(r"^[a-zA-Z0-9_.@+-]+$")
+
+SKILL_SLASH_RE = re.compile(
+    r"^\s*/(?:i-have-adhd|humanizer|caveman|ponytail|andrej-karpathy-skill|"
+    r"autonomous-delivery|codeburn|repo-context|leanrea|ship|trail|poteto-mode|"
+    r"skills|clear|compact|help|model|agent|mcp|resume)\b",
+    re.I,
+)
+NOISE_EPISODE_RE = re.compile(
+    r"\bactivated\s+(?:a\s+series\s+of\s+skills\s+and\s+modes|the\s+/[a-z0-9_-]+\s+(?:mode|skill))\b|"
+    r"/(?:i-have-adhd|caveman|ponytail|humanizer|andrej-karpathy-skill|autonomous-delivery|codeburn|leanrea)\b.*"
+    r"/(?:i-have-adhd|caveman|ponytail|humanizer|andrej-karpathy-skill|autonomous-delivery|codeburn|leanrea)\b",
+    re.I,
+)
+GENERIC_DIRS = {
+    "kumarnaresh", "users", "home", "desktop", "documents", "downloads",
+    "learn", "repos", "worktrees", "scratch", "scratch_e2e", "temp", "tmp",
+    "hermes", "profiles", "root", "var", "opt", "src", "app",
+}
+
+TOOL_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "name": "everos_recall",
+        "description": "Search unified long-term EverOS memory (hybrid BM25 + vector + profile/episodes/cases).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Targeted search keywords or question."},
+                "max_tokens": {"type": "integer", "default": 1500, "description": "Approximate token budget for results."},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "everos_retain",
+        "description": "Store a durable fact, user preference, or architectural decision in EverOS memory.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Durable fact, preference, or decision to retain."},
+                "context": {"type": "string", "default": "general", "description": "Category or scope tag (e.g. architecture, preference)."},
+            },
+            "required": ["content"],
+        },
+    },
+]
+
+_sleep = time.sleep
 
 
 def normalize_owner_id(raw: str, fallback: str) -> str:
@@ -103,6 +155,18 @@ def split_command(raw: str) -> list[str]:
     return [t for t in out if t]
 
 
+def _bool_or(raw: Any, fallback: bool) -> bool:
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        v = raw.strip().lower()
+        if v in ("1", "true", "yes", "on"):
+            return True
+        if v in ("0", "false", "no", "off"):
+            return False
+    return fallback
+
+
 class Config:
     """Plugin-side knobs only — extraction, storage and models stay in
     EverOS's own config (mirror principle)."""
@@ -112,13 +176,35 @@ class Config:
             v = values.get(key)
             return v.strip() if isinstance(v, str) and v.strip() else None
 
-        self.base_url: str = normalize_base_url(s("base_url"))
-        raw_user_id = s("user_id") or _os_user()
+        raw_base = s("base_url") or (
+            os.environ.get("EVEROS_BASE_URL") if "base_url" not in values else None
+        )
+        self.base_url: str = normalize_base_url(raw_base)
+        raw_user_id = s("user_id") or os.environ.get("EVEROS_USER_ID") or _os_user()
         self.user_id: str | None = (
             normalize_owner_id(raw_user_id, "user") if raw_user_id else None
         )
         self.agent_id: str = normalize_owner_id(
             s("agent_id") or DEFAULTS["agent_id"], DEFAULTS["agent_id"]
+        )
+        raw_recall_app = (
+            s("recall_app_id")
+            or os.environ.get("EVEROS_RECALL_APP_ID")
+            or DEFAULTS["recall_app_id"]
+        )
+        self.recall_app_id: str = normalize_owner_id(
+            raw_recall_app, DEFAULTS["recall_app_id"]
+        )
+        self.augment_cwd: bool = _bool_or(
+            values.get("augment_cwd"), DEFAULTS["augment_cwd"]
+        )
+        self.enable_tools: bool = _bool_or(
+            values.get("enable_tools", os.environ.get("EVEROS_ENABLE_TOOLS")),
+            DEFAULTS["enable_tools"],
+        )
+        self.probe_health_on_available: bool = _bool_or(
+            values.get("probe_health_on_available"),
+            DEFAULTS["probe_health_on_available"],
         )
         self.query_max_units: int = _int_or(
             values.get("query_max_units"), DEFAULTS["query_max_units"]
@@ -158,6 +244,80 @@ def load_config(hermes_home: str | None) -> Config:
         except Exception:
             values = {}  # missing/corrupt config -> defaults (fail-open)
     return Config(values if isinstance(values, dict) else {})
+
+
+def is_skill_activation_turn(user_txt: str) -> bool:
+    """True when a user message is empty, a slash command, or pure skill-activation boilerplate."""
+    u = (user_txt or "").strip()
+    if not u:
+        return True
+    if u.startswith("/") or SKILL_SLASH_RE.match(u):
+        return True
+    lines = [ln.strip() for ln in u.splitlines() if ln.strip()]
+    if lines and all(ln.startswith("/") for ln in lines):
+        return True
+    if NOISE_EPISODE_RE.search(u):
+        return True
+    return False
+
+
+def is_noise_episode(item: Any) -> bool:
+    """True when a recalled episode dict or string is skill-activation noise."""
+    if isinstance(item, str):
+        return bool(NOISE_EPISODE_RE.search(item))
+    if isinstance(item, dict):
+        subj = str(item.get("subject") or "").strip()
+        summ = str(
+            item.get("summary")
+            or item.get("episode")
+            or item.get("content")
+            or item.get("text")
+            or ""
+        ).strip()
+        return bool(NOISE_EPISODE_RE.search(f"{subj} {summ}".strip()))
+    return False
+
+
+def augment_query_with_cwd(query: str, cwd: str | None = None) -> str:
+    """Prefix recall query with non-generic parent/current directory names when available."""
+    q = (query or "").strip()
+    if not q:
+        return ""
+    resolved_cwd = cwd if cwd is not None else os.environ.get("TERMINAL_CWD")
+    if not resolved_cwd:
+        return q
+    try:
+        p = Path(resolved_cwd)
+        name = p.name.strip()
+        parent = p.parent.name.strip() if p.parent else ""
+        ctx_parts: list[str] = []
+        if parent and parent.lower() not in GENERIC_DIRS and not parent.startswith("."):
+            ctx_parts.append(parent.replace(".worktrees", ""))
+        if name and name.lower() not in GENERIC_DIRS and not name.startswith("."):
+            ctx_parts.append(name)
+        prefix = " ".join(dict.fromkeys(part for part in ctx_parts if part))
+        if prefix and prefix.lower() not in q.lower():
+            return f"{prefix}: {q}"
+    except Exception:
+        pass
+    return q
+
+
+def _has_local_everos_install(cfg: Config) -> bool:
+    if cfg.everos_dir or cfg.start_cmd:
+        return True
+    try:
+        if Path(os.path.expanduser("~/.everos/everos.toml")).is_file():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_local_everos_configured(cfg: Config) -> bool:
+    if _has_local_everos_install(cfg):
+        return True
+    return any(h in cfg.base_url.lower() for h in ("127.0.0.1", "localhost"))
 
 
 # ── weighted query clip (CJK char = 2 units, other = 1) ──────────────────────
@@ -215,7 +375,12 @@ def _item_text(item: Any) -> str:
         if case_parts:
             return " | ".join(case_parts)
 
-        for key in ("content", "text", "summary", "title", "name"):
+        subj = item.get("subject")
+        summ = item.get("summary") or item.get("episode")
+        if isinstance(subj, str) and subj.strip() and isinstance(summ, str) and summ.strip():
+            return f"{subj.strip()}: {summ.strip()}"
+
+        for key in ("content", "text", "summary", "episode", "title", "name"):
             v = item.get(key)
             if isinstance(v, str) and v.strip():
                 return v.strip()
@@ -240,9 +405,15 @@ def render(user: dict[str, Any] | None, agent: dict[str, Any] | None) -> str:
     """Build the injected memory block, or ``""`` when there's nothing."""
     user = user or {}
     agent = agent or {}
+    raw_episodes = user.get("episodes")
+    filtered_episodes = (
+        [ep for ep in raw_episodes if not is_noise_episode(ep)]
+        if isinstance(raw_episodes, list)
+        else raw_episodes
+    )
     body = [
         *_section("Developer profile", user.get("profiles")),
-        *_section("Relevant past episodes", user.get("episodes")),
+        *_section("Relevant past episodes", filtered_episodes),
         *_section("Relevant cases", agent.get("agent_cases")),
         *_section("Relevant skills", agent.get("agent_skills")),
     ]
@@ -441,18 +612,20 @@ def _spawn_daemon(fn) -> None:  # module-level so tests can run it inline
 
 
 class EverosMemoryProvider(MemoryProvider):
-    """Context-mode only: automatic recall + capture, zero model-callable tools."""
+    """Automatic recall + capture, with optional cross-harness shared recall and tools."""
 
     def __init__(self) -> None:
         self._cfg = Config({})
         self._client: EverosClient | None = None
         self._sid: str | None = None
         self._home: str | None = None
+        self._workspace: str | None = None
         self._project: str = "default"
         self._primary = True  # cron/subagent contexts must not write memory
         self._child = None  # the EverOS process if WE spawned it
         self._stopped = False
         self._pending: list[threading.Event] = []  # in-flight capture posts
+        self._last_unavailable_reason: str = ""
 
     @property
     def name(self) -> str:
@@ -461,11 +634,41 @@ class EverosMemoryProvider(MemoryProvider):
     # -- lifecycle -------------------------------------------------------------
 
     def is_available(self) -> bool:
-        return True  # config checks only — NO network here (host contract)
+        self._last_unavailable_reason = ""
+        if not self._cfg.probe_health_on_available or self._client is None:
+            return True  # config checks only — NO network here by default (host contract)
+        try:
+            self._client.health(timeout_s=4.0)
+            return True
+        except Exception as exc:
+            self._last_unavailable_reason = (
+                f"EverOS /health probe failed at {self._cfg.base_url}: {exc}"
+            )
+        if _is_local_everos_configured(self._cfg):
+            for _ in range(2):
+                _sleep(1.0)
+                try:
+                    self._client.health(timeout_s=4.0)
+                    self._last_unavailable_reason = ""
+                    return True
+                except Exception as exc:
+                    self._last_unavailable_reason = (
+                        f"EverOS /health retry failed at {self._cfg.base_url}: {exc}"
+                    )
+            if _has_local_everos_install(self._cfg):
+                return True  # fail-open across local server restart blips
+        return False
+
+    def unavailable_reason(self) -> str:
+        return (
+            self._last_unavailable_reason
+            or f"EverOS at {self._cfg.base_url}/health did not return status='ok'."
+        )
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         self._sid = _clip_id(session_id)
         self._home = kwargs.get("hermes_home")
+        self._workspace = kwargs.get("agent_workspace")
         self._stopped = False
         # Cron system prompts / subagent chatter must not pollute the store.
         self._primary = kwargs.get("agent_context", "primary") == "primary"
@@ -501,50 +704,61 @@ class EverosMemoryProvider(MemoryProvider):
 
     # -- recall (hot path; before each model call) ------------------------------
 
-    def prefetch(self, query: str, *, session_id: str = "") -> str:
-        try:
-            if self._client is None or not (query or "").strip():
-                return ""
-            q = clip_weighted(query.strip(), self._cfg.query_max_units)
-            results: dict[str, dict[str, Any] | None] = {"user": None, "agent": None}
+    def _run_two_track_search(self, q: str, timeout_s: float = RECALL_TIMEOUT_S) -> dict[str, dict[str, Any] | None]:
+        results: dict[str, dict[str, Any] | None] = {"user": None, "agent": None}
+        if self._client is None or not q:
+            return results
+        recall_app = self._cfg.recall_app_id or APP_ID
+        recall_project = "default" if recall_app == "shared" else self._project
 
-            def _search(owner_key: str, owner_field: str, owner: str, extra: dict) -> None:
-                try:
-                    results[owner_key] = self._client.search(
-                        {
-                            owner_field: owner,
-                            "app_id": APP_ID,
-                            "project_id": self._project,
-                            "query": q,
-                            **extra,
-                        },
-                        timeout_s=RECALL_TIMEOUT_S,
-                    )
-                except Exception:
-                    results[owner_key] = None  # per-track fail-open
-
-            threads = []
-            if self._cfg.user_id:
-                threads.append(
-                    threading.Thread(
-                        target=_search,
-                        args=("user", "user_id", self._cfg.user_id, {"include_profile": True}),
-                        daemon=True,
-                    )
+        def _search(owner_key: str, owner_field: str, owner: str, extra: dict) -> None:
+            try:
+                results[owner_key] = self._client.search(
+                    {
+                        owner_field: owner,
+                        "app_id": recall_app,
+                        "project_id": recall_project,
+                        "query": q,
+                        **extra,
+                    },
+                    timeout_s=timeout_s,
                 )
+            except Exception:
+                results[owner_key] = None  # per-track fail-open
+
+        threads = []
+        if self._cfg.user_id:
             threads.append(
                 threading.Thread(
                     target=_search,
-                    args=("agent", "agent_id", self._cfg.agent_id, {}),
+                    args=("user", "user_id", self._cfg.user_id, {"include_profile": True}),
                     daemon=True,
                 )
             )
-            for t in threads:
-                t.start()
-            # One shared deadline — per-thread joins must not stack the budget.
-            deadline = time.monotonic() + RECALL_TIMEOUT_S + 1.0
-            for t in threads:
-                t.join(timeout=max(0.0, deadline - time.monotonic()))
+        threads.append(
+            threading.Thread(
+                target=_search,
+                args=("agent", "agent_id", self._cfg.agent_id, {}),
+                daemon=True,
+            )
+        )
+        for t in threads:
+            t.start()
+        # One shared deadline — per-thread joins must not stack the budget.
+        deadline = time.monotonic() + timeout_s + 1.0
+        for t in threads:
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+        return results
+
+    def prefetch(self, query: str, *, session_id: str = "") -> str:
+        try:
+            if self._client is None or is_skill_activation_turn(query):
+                return ""
+            raw_q = query.strip()
+            if self._cfg.augment_cwd:
+                raw_q = augment_query_with_cwd(raw_q, cwd=self._workspace)
+            q = clip_weighted(raw_q, self._cfg.query_max_units)
+            results = self._run_two_track_search(q, timeout_s=RECALL_TIMEOUT_S)
             return render(results["user"], results["agent"])
         except Exception as err:
             logger.warning("[everos] recall failed (fail-open): %s", err)
@@ -561,6 +775,8 @@ class EverosMemoryProvider(MemoryProvider):
         messages: list[Any] | None = None,
     ) -> None:
         if not self._primary or self._client is None:
+            return
+        if not messages and is_skill_activation_turn(user_content):
             return
         sid = _clip_id(session_id) or self._sid
         if not sid:
@@ -722,8 +938,77 @@ class EverosMemoryProvider(MemoryProvider):
 
     # -- tools & setup -------------------------------------------------------------
 
+    def system_prompt_block(self) -> str:
+        if not self._cfg.enable_tools:
+            return ""
+        return (
+            f"EverOS unified long-term memory is active (recall scope '{self._cfg.recall_app_id}'). "
+            "Prefetched memory is a coarse preview and is not a substitute for calling `everos_recall`. "
+            "Before answering substantive technical questions or after context compaction, call `everos_recall` "
+            "with targeted keywords, and call `everos_retain` to store durable facts, preferences, or decisions."
+        )
+
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        return []  # context-mode only — no model-callable tools
+        if self._cfg.enable_tools:
+            return list(TOOL_SCHEMAS)
+        return []  # default context-mode only — no model-callable tools
+
+    def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
+        args = args if isinstance(args, dict) else {}
+        if tool_name in ("everos_recall", "hindsight_recall", "recall"):
+            query = str(args.get("query") or "").strip()
+            if not query or self._client is None:
+                return json.dumps({"results": ""})
+            max_tokens = _int_or(args.get("max_tokens"), 1500)
+            q = clip_weighted(query, self._cfg.query_max_units)
+            results = self._run_two_track_search(q, timeout_s=RECALL_TIMEOUT_S)
+            rendered = render(results["user"], results["agent"])
+            max_chars = max(600, max_tokens * 4)
+            return json.dumps({"results": rendered[:max_chars]})
+
+        if tool_name in ("everos_retain", "hindsight_retain", "retain"):
+            content = str(args.get("content") or "").strip()
+            ctx = str(args.get("context") or "general").strip()
+            if not content or self._client is None:
+                return json.dumps(
+                    {"status": "skipped", "reason": "empty content or uninitialized client"}
+                )
+            tagged = f"[{ctx}] {content}" if ctx and ctx != "general" else content
+            now_ms = _now_ms()
+            sid = _clip_id(f"explicit-{self._sid or 'hermes'}-{now_ms}") or "explicit-hermes"
+            sender_id = self._cfg.user_id or self._cfg.agent_id
+            user_role = "user" if self._cfg.user_id else "assistant"
+            try:
+                self._client.add(
+                    {
+                        "session_id": sid,
+                        "app_id": APP_ID,
+                        "project_id": self._project,
+                        "messages": [
+                            {
+                                "sender_id": sender_id,
+                                "role": user_role,
+                                "timestamp": now_ms,
+                                "content": tagged[:4000],
+                            },
+                            {
+                                "sender_id": self._cfg.agent_id,
+                                "role": "assistant",
+                                "timestamp": now_ms + 1,
+                                "content": "Stored durable fact in EverOS.",
+                            },
+                        ],
+                    }
+                )
+                res = self._client.flush(
+                    {"session_id": sid, "app_id": APP_ID, "project_id": self._project},
+                    timeout_s=30.0,
+                )
+                return json.dumps(res)
+            except Exception as exc:
+                return json.dumps({"status": "deferred_or_error", "error": str(exc)})
+
+        return json.dumps({"error": f"unknown tool {tool_name}"})
 
     def get_config_schema(self) -> list[dict[str, Any]]:
         return [
@@ -740,6 +1025,26 @@ class EverosMemoryProvider(MemoryProvider):
                 "key": "agent_id",
                 "description": "Constant pooled agent identity",
                 "default": DEFAULTS["agent_id"],
+            },
+            {
+                "key": "recall_app_id",
+                "description": 'Recall scope app_id ("hermes" for host-only, "shared" for cross-harness recall)',
+                "default": DEFAULTS["recall_app_id"],
+            },
+            {
+                "key": "augment_cwd",
+                "description": "Prefix recall queries with non-generic CWD project/repo directory names",
+                "default": str(DEFAULTS["augment_cwd"]).lower(),
+            },
+            {
+                "key": "enable_tools",
+                "description": "Expose explicit everos_recall and everos_retain model-callable tools",
+                "default": str(DEFAULTS["enable_tools"]).lower(),
+            },
+            {
+                "key": "probe_health_on_available",
+                "description": "Probe /health in is_available() with local restart-blip retry resilience",
+                "default": str(DEFAULTS["probe_health_on_available"]).lower(),
             },
             {
                 "key": "query_max_units",
@@ -771,6 +1076,10 @@ class EverosMemoryProvider(MemoryProvider):
         existing.update({k: v for k, v in values.items() if v is not None})
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+# Backwards-compatible alias
+EverosProvider = EverosMemoryProvider
 
 
 def register(ctx: Any) -> None:
