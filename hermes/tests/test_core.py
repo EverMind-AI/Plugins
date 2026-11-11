@@ -227,5 +227,90 @@ class TestProjectId(unittest.TestCase):
         self.assertEqual(mod.path_safe_project_id(None), "default")
 
 
+class TestNoiseFilter(unittest.TestCase):
+    def test_slash_commands_and_multiline_slashes_detected(self):
+        for noisy in (
+            "",
+            "   ",
+            "/ship",
+            "/i-have-adhd",
+            "/caveman\n/ponytail\n/humanizer",
+            "/skills list",
+        ):
+            self.assertTrue(mod.is_skill_activation_turn(noisy), f"expected noisy: {noisy!r}")
+
+    def test_noise_episode_prose_detected(self):
+        self.assertTrue(
+            mod.is_noise_episode(
+                {"subject": "Modes", "summary": "User activated a series of skills and modes."}
+            )
+        )
+        self.assertTrue(
+            mod.is_noise_episode("The assistant activated the /ship skill for deployment.")
+        )
+        block = mod.render(
+            {
+                "episodes": [
+                    {"subject": "Noise", "summary": "User activated a series of skills and modes."},
+                    {"subject": "Auth", "summary": "Switched JWT signing to Ed25519."},
+                ]
+            },
+            None,
+        )
+        self.assertIn("Auth: Switched JWT signing to Ed25519.", block)
+        self.assertNotIn("activated a series of skills", block)
+
+    def test_normal_prompts_and_paths_not_filtered(self):
+        for clean in (
+            "How does /api/v1/memory/search work?",
+            "fix bug in C:/learn/EverOS",
+            "Explain the ship workflow and recall scope",
+        ):
+            self.assertFalse(mod.is_skill_activation_turn(clean), f"expected clean: {clean!r}")
+
+
+class TestCwdAugmentation(unittest.TestCase):
+    def test_augments_with_repo_and_parent(self):
+        self.assertEqual(
+            mod.augment_query_with_cwd("port decision", "C:/learn/EverOS-Plugins/claude-code"),
+            "EverOS-Plugins claude-code: port decision",
+        )
+
+    def test_strips_worktrees_suffix_and_skips_generic_dirs(self):
+        self.assertEqual(
+            mod.augment_query_with_cwd("auth bug", "/Users/dev/learn/hermes-agent.worktrees/feat-x"),
+            "hermes-agent feat-x: auth bug",
+        )
+
+    def test_idempotent_when_prefix_already_in_query(self):
+        q = "EverOS-Plugins claude-code: port decision"
+        self.assertEqual(
+            mod.augment_query_with_cwd(q, "C:/learn/EverOS-Plugins/claude-code"),
+            q,
+        )
+
+
+class TestConfigExtensions(unittest.TestCase):
+    def test_new_config_keys_and_defaults(self):
+        cfg = mod.Config({})
+        self.assertEqual(cfg.recall_app_id, "hermes")
+        self.assertTrue(cfg.augment_cwd)
+        self.assertFalse(cfg.enable_tools)
+        self.assertFalse(cfg.probe_health_on_available)
+
+        custom = mod.Config(
+            {
+                "recall_app_id": "shared",
+                "augment_cwd": "false",
+                "enable_tools": "true",
+                "probe_health_on_available": True,
+            }
+        )
+        self.assertEqual(custom.recall_app_id, "shared")
+        self.assertFalse(custom.augment_cwd)
+        self.assertTrue(custom.enable_tools)
+        self.assertTrue(custom.probe_health_on_available)
+
+
 if __name__ == "__main__":
     unittest.main()

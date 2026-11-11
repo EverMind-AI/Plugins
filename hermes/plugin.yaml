@@ -1,7 +1,8 @@
 name: everos
-version: "1.0.0"
+version: "1.1.0"
 manifest_version: 1
-description: "EverOS-backed cross-session memory — markdown source of truth, hybrid recall, user + agent tracks."
+requires_hermes: ">=0.19.0"
+description: "EverOS-backed cross-session and cross-harness memory — markdown source of truth, hybrid recall, user + agent tracks, CWD context augmentation, and optional recall/retain tools."
 hooks:
   - sync_turn
   - on_session_end

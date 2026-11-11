@@ -52,7 +52,7 @@ class FakeClient:
         return [req for k, req in self.calls if k == kind]
 
 
-def make_provider(tmp_home: str, agent_context: str = "primary"):
+def make_provider(tmp_home: str, agent_context: str = "primary", **init_kwargs):
     """Provider with inline daemons, provisioning stubbed, and a fake client."""
     provider = mod.EverosMemoryProvider()
     real_spawn, real_provision = mod._spawn_daemon, mod.provision
@@ -60,7 +60,11 @@ def make_provider(tmp_home: str, agent_context: str = "primary"):
     mod.provision = lambda *a, **k: provision_mod.ProvisionResult("failed", "stubbed")
     try:
         provider.initialize(
-            "session-1", hermes_home=tmp_home, platform="cli", agent_context=agent_context
+            "session-1",
+            hermes_home=tmp_home,
+            platform="cli",
+            agent_context=agent_context,
+            **init_kwargs,
         )
     finally:
         mod._spawn_daemon = real_spawn
@@ -170,6 +174,62 @@ class TestPrefetch(unittest.TestCase):
         self.assertEqual(q, "中" * 250)
 
 
+class TestPrefetchHardening(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.real_spawn = mod._spawn_daemon
+        mod._spawn_daemon = lambda fn: fn()
+
+    def tearDown(self):
+        mod._spawn_daemon = self.real_spawn
+        self.tmp.cleanup()
+
+    def test_prefetch_skips_slash_and_skill_activation_turns(self):
+        provider, fake = make_provider(self.tmp.name)
+        self.assertEqual(provider.prefetch("/ship"), "")
+        self.assertEqual(provider.prefetch("/i-have-adhd\n/caveman"), "")
+        self.assertEqual(fake.of("search"), [])
+
+    def test_prefetch_shared_recall_app_id(self):
+        (Path(self.tmp.name) / "everos.json").write_text(
+            json.dumps({"recall_app_id": "shared"}), encoding="utf-8"
+        )
+        provider, fake = make_provider(self.tmp.name)
+        fake.search_results = {"user": {"episodes": ["cross-harness fact"]}, "agent": {}}
+        block = provider.prefetch("what is the deployment topology?")
+        self.assertIn("cross-harness fact", block)
+        for req in fake.of("search"):
+            self.assertEqual(req["app_id"], "shared")
+            self.assertEqual(req["project_id"], "default")
+        # Capture still writes to app_id="hermes"
+        provider.sync_turn("question", "answer", session_id="s-shared")
+        adds = fake.of("add")
+        self.assertEqual(len(adds), 1)
+        self.assertEqual(adds[0]["app_id"], "hermes")
+
+    def test_prefetch_augments_cwd_from_agent_workspace(self):
+        provider, fake = make_provider(self.tmp.name, agent_workspace="/repos/my-service")
+        fake.search_results = {"agent": {}}
+        provider.prefetch("database schema")
+        q = fake.of("search")[0]["query"]
+        self.assertEqual(q, "my-service: database schema")
+
+    def test_prefetch_filters_noise_episodes(self):
+        provider, fake = make_provider(self.tmp.name)
+        fake.search_results = {
+            "user": {
+                "episodes": [
+                    {"subject": "Session", "summary": "User activated a series of skills and modes."},
+                    {"subject": "DB", "summary": "Use PostgreSQL 16 for primary OLTP."},
+                ]
+            },
+            "agent": {},
+        }
+        block = provider.prefetch("which database?")
+        self.assertIn("DB: Use PostgreSQL 16 for primary OLTP.", block)
+        self.assertNotIn("activated a series of skills", block)
+
+
 class TestSyncTurn(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -202,6 +262,10 @@ class TestSyncTurn(unittest.TestCase):
         self.provider.sync_turn("q", "a")
         msgs = self.fake.of("add")[0]["messages"]
         self.assertEqual([m["role"] for m in msgs], ["user", "assistant"])
+
+    def test_sync_turn_skips_skill_activation_noise(self):
+        self.provider.sync_turn("/i-have-adhd\n/caveman", "Activated modes.")
+        self.assertEqual(self.fake.of("add"), [])
 
     def test_non_primary_context_never_writes(self):
         provider, fake = make_provider(self.tmp.name, agent_context="cron")
@@ -370,8 +434,107 @@ class TestConfigAndSchema(unittest.TestCase):
         keys = {f["key"] for f in mod.EverosMemoryProvider().get_config_schema()}
         self.assertEqual(
             keys,
-            {"base_url", "user_id", "agent_id", "query_max_units", "everos_dir", "start_cmd"},
+            {
+                "base_url",
+                "user_id",
+                "agent_id",
+                "recall_app_id",
+                "augment_cwd",
+                "enable_tools",
+                "probe_health_on_available",
+                "query_max_units",
+                "everos_dir",
+                "start_cmd",
+            },
         )
+
+
+class TestToolsAndAvailability(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.real_spawn = mod._spawn_daemon
+        self.real_sleep = mod._sleep
+        mod._spawn_daemon = lambda fn: fn()
+        mod._sleep = lambda _s: None
+
+    def tearDown(self):
+        mod._spawn_daemon = self.real_spawn
+        mod._sleep = self.real_sleep
+        self.tmp.cleanup()
+
+    def test_tools_disabled_by_default_and_enabled_via_config(self):
+        p_default, _ = make_provider(self.tmp.name)
+        self.assertEqual(p_default.get_tool_schemas(), [])
+        self.assertEqual(p_default.system_prompt_block(), "")
+
+        (Path(self.tmp.name) / "everos.json").write_text(
+            json.dumps({"enable_tools": True, "recall_app_id": "shared"}), encoding="utf-8"
+        )
+        p_enabled, _ = make_provider(self.tmp.name)
+        names = [t["name"] for t in p_enabled.get_tool_schemas()]
+        self.assertEqual(names, ["everos_recall", "everos_retain"])
+        self.assertIn("everos_recall", p_enabled.system_prompt_block())
+        self.assertIn("shared", p_enabled.system_prompt_block())
+
+    def test_handle_tool_call_recall_and_retain(self):
+        (Path(self.tmp.name) / "everos.json").write_text(
+            json.dumps({"enable_tools": True, "recall_app_id": "shared"}), encoding="utf-8"
+        )
+        provider, fake = make_provider(self.tmp.name)
+        fake.search_results = {
+            "user": {"episodes": [{"subject": "DB", "summary": "Use SQLite WAL mode."}]},
+            "agent": {},
+        }
+        rec_out = json.loads(
+            provider.handle_tool_call("everos_recall", {"query": "SQLite mode", "max_tokens": 500})
+        )
+        self.assertIn("DB: Use SQLite WAL mode.", rec_out["results"])
+
+        ret_out = json.loads(
+            provider.handle_tool_call(
+                "everos_retain", {"content": "Always pin 40-char SHA", "context": "security"}
+            )
+        )
+        self.assertEqual(ret_out["status"], "extracted")
+        adds = fake.of("add")
+        flushes = fake.of("flush")
+        self.assertEqual(len(adds), 1)
+        self.assertEqual(len(flushes), 1)
+        self.assertIn("[security] Always pin 40-char SHA", adds[0]["messages"][0]["content"])
+
+    def test_is_available_health_probe_and_restart_blip_resilience(self):
+        (Path(self.tmp.name) / "everos.json").write_text(
+            json.dumps({"probe_health_on_available": True, "everos_dir": self.tmp.name}),
+            encoding="utf-8",
+        )
+        provider, fake = make_provider(self.tmp.name)
+        fake.health_ok = True
+        self.assertTrue(provider.is_available())
+
+        # Transient restart blip: health fails across retries, but local everos_dir keeps provider available
+        fake.health_ok = False
+        self.assertTrue(provider.is_available())
+        self.assertIn("retry failed", provider.unavailable_reason())
+
+        # Unconfigured remote server down -> returns False
+        (Path(self.tmp.name) / "everos.json").write_text(
+            json.dumps(
+                {
+                    "probe_health_on_available": True,
+                    "base_url": "http://remote-everos.example.invalid:8000",
+                }
+            ),
+            encoding="utf-8",
+        )
+        p_remote, fake_remote = make_provider(self.tmp.name)
+        fake_remote.health_ok = False
+        real_has_local = mod._has_local_everos_install
+        mod._has_local_everos_install = lambda _cfg: False
+        try:
+            self.assertFalse(p_remote.is_available())
+            self.assertIn("probe failed", p_remote.unavailable_reason())
+        finally:
+            mod._has_local_everos_install = real_has_local
 
 
 class TestRegister(unittest.TestCase):
