@@ -2,7 +2,7 @@
   "id": "evermind-ai-everos",
   "name": "OpenClaw Memory — EverOS",
   "description": "EverOS-backed cross-session memory for OpenClaw (memory slot).",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "kind": "memory",
   "activation": {
     "onStartup": true

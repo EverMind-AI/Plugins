@@ -224,6 +224,11 @@ Recall injects up to four sections, all served by EverOS:
 - **Relevant cases** — concrete past agent trajectories (what worked)
 - **Relevant skills** — reusable patterns distilled from multiple cases
 
+On OpenClaw 2026.11 and later, the first two (your profile and episodes) are recalled
+only in your own direct chat. In a turn OpenClaw marks as `conversation` audience
+(another sender, a group, channel, or thread) only cases and skills are injected. Older
+OpenClaw versions do not mark audience, so every turn gets all four.
+
 ### Captured
 
 - User and assistant text (the plugin strips its own injected recall block first,

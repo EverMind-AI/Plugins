@@ -22,6 +22,14 @@ export interface PluginHookAgentContext {
   modelProviderId?: string;
   modelId?: string;
   channelId?: string;
+  /**
+   * Host-resolved memory partition for the turn (OpenClaw 2026.11+). `owner-private`
+   * is the owner's direct chat; `conversation` is any other sender, group, channel,
+   * or thread. Absent on older hosts.
+   */
+  memoryAudience?:
+    | { kind: "owner-private"; agentId: string }
+    | { kind: "conversation"; agentId: string; sessionKey: string; sessionId: string };
   [key: string]: unknown;
 }
 
@@ -40,6 +48,11 @@ export interface PluginHookSessionContext {
 export interface BeforePromptBuildEvent {
   prompt: string;
   messages: unknown[];
+  /**
+   * The current request before history projection (OpenClaw 2026.11+). `prompt`
+   * may carry reconstructed history on some runtimes; `""` means no textual request.
+   */
+  currentUserMessage?: string;
 }
 
 /** Honored return fields for `before_prompt_build` (exactly these five). */

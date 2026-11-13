@@ -449,6 +449,51 @@ test("recall: uses event.prompt when history is empty (fresh session)", async ()
   assert.equal(spy.searches[0]!.query, "what am I working on?");
 });
 
+test("recall: currentUserMessage is the query when the host supplies it", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  await h.recall(
+    {
+      prompt: "old turn\nold reply\nwhere is the deploy key?",
+      messages: [],
+      currentUserMessage: "where is the deploy key?",
+    },
+    ctx(),
+  );
+  assert.equal(spy.searches.length, 2);
+  for (const s of spy.searches) assert.equal(s.query, "where is the deploy key?");
+});
+
+test("recall: an explicit empty currentUserMessage recalls nothing, even with history", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  const out = await h.recall(
+    { prompt: "reconstructed", messages: [{ role: "user", content: "earlier question" }], currentUserMessage: "" },
+    ctx(),
+  );
+  assert.equal(out, undefined);
+  assert.equal(spy.searches.length, 0);
+});
+
+test("recall: conversation audience keeps the owner's memory out, agent track stays", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  const audience = { kind: "conversation" as const, agentId: "main", sessionKey: "k", sessionId: "s" };
+  await h.recall({ prompt: "who is on call?", messages: [] }, ctx({ memoryAudience: audience }));
+  assert.equal(spy.searches.length, 1);
+  assert.ok("agent_id" in spy.searches[0]! && spy.searches[0]!.agent_id);
+});
+
+test("recall: owner-private audience searches both tracks", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  await h.recall(
+    { prompt: "who is on call?", messages: [] },
+    ctx({ memoryAudience: { kind: "owner-private", agentId: "main" } }),
+  );
+  assert.equal(spy.searches.length, 2);
+});
+
 test("recall: empty query → no search, no injection", async () => {
   const spy = spyClient();
   const h = createHandlers(baseDeps(spy.client));
