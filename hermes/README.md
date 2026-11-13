@@ -13,7 +13,7 @@ Design details: [`docs/DESIGN_DOC.md`](./docs/DESIGN_DOC.md) · build/test/relea
 ## Install
 
 ```bash
-hermes plugins install EverMind-AI/plugins/hermes    # → ~/.hermes/plugins/memory/everos/
+hermes plugins install EverMind-AI/plugins/hermes    # → $HERMES_HOME/plugins/everos/
 hermes memory setup                                  # pick "everos"; answer the prompts
 hermes memory status                                 # verify: provider active, EverOS healthy
 ```

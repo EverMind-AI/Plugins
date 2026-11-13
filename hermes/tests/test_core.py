@@ -227,5 +227,23 @@ class TestProjectId(unittest.TestCase):
         self.assertEqual(mod.path_safe_project_id(None), "default")
 
 
+class TestHostLoaderContract(unittest.TestCase):
+    def test_no_package_global_is_named_after_a_sibling_module(self):
+        # Hermes >= 2026.9.7 setattr()s every sibling module onto the package after
+        # __init__ runs; a global sharing a module's name is silently replaced by it
+        # (this broke EverOS auto-start: `provision` became the provision module).
+        import types
+        from pathlib import Path
+
+        for path in Path(mod.__file__).parent.glob("*.py"):
+            if path.stem == "__init__":
+                continue
+            value = getattr(mod, path.stem, None)
+            self.assertTrue(
+                value is None or isinstance(value, types.ModuleType),
+                f"package global {path.stem!r} would be replaced by {path.name}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
