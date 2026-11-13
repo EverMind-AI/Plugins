@@ -35,14 +35,22 @@ codex plugin marketplace add EverMind-AI/Plugins
 codex plugin add everos@everos
 ```
 
-Then point it at your EverOS if it is not on the default address:
+Then open `/hooks` in a Codex session and trust the five EverOS hooks. Codex
+installs plugin hooks untrusted and does not run them until you do, so a skipped
+step looks like a plugin that installed fine and remembers nothing. Codex 0.167
+pins the trust to the plugin's content: after every plugin update the hooks show
+as modified and need trusting again.
+
+Point it at your EverOS if it is not on the default address:
 
 ```bash
 export EVEROS_CODEX_BASE_URL=http://127.0.0.1:8000
 ```
 
-Verified end to end against Codex 0.149.0: the marketplace resolves, the plugin
-installs as `installed, enabled`, and its hooks fire on a real session.
+Verified against Codex 0.149.0 and 0.167.2: the marketplace resolves, the plugin
+installs as `installed, enabled`, and Codex discovers all five hooks with no errors.
+That the hooks fire on a real session was probed with
+`--dangerously-bypass-hook-trust` (`scripts/probe-hooks.sh`), not through `/hooks`.
 
 ## Two memory systems
 
