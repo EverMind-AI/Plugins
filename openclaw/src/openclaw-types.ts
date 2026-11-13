@@ -40,6 +40,11 @@ export interface PluginHookSessionContext {
 export interface BeforePromptBuildEvent {
   prompt: string;
   messages: unknown[];
+  /**
+   * The current request before history projection (OpenClaw 2026.11+). `prompt`
+   * may carry reconstructed history on some runtimes; `""` means no textual request.
+   */
+  currentUserMessage?: string;
 }
 
 /** Honored return fields for `before_prompt_build` (exactly these five). */

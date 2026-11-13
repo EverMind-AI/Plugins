@@ -752,12 +752,20 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         const project_id = projectIdFrom(ctx);
         noteActiveSession(sessionIdOf(ctx), project_id);
 
-        // The current user prompt lives in `event.prompt`; `event.messages` is
-        // prior history (empty on a fresh session, verified against the OpenClaw
-        // runtime — it never contains the current turn). The query keeps the prompt
-        // whole and blends in up to `queryN - 1` prior user lines for follow-up
-        // context; a blank prompt falls back to recent history. See buildRecallQuery.
-        const current = typeof event.prompt === "string" ? event.prompt : "";
+        // The current request is `event.currentUserMessage` where the host supplies
+        // it (2026.11+): `event.prompt` may then carry reconstructed history, and an
+        // explicit "" means no textual request, which must not fall back to history.
+        // Older hosts put it in `event.prompt`. `event.messages` is prior history
+        // (empty on a fresh session; it never contains the current turn). The query
+        // keeps the request whole and blends in up to `queryN - 1` prior user lines;
+        // a blank `prompt` falls back to recent history. See buildRecallQuery.
+        if (event.currentUserMessage === "") return;
+        const current =
+          typeof event.currentUserMessage === "string"
+            ? event.currentUserMessage
+            : typeof event.prompt === "string"
+              ? event.prompt
+              : "";
         const q = buildRecallQuery(current, event.messages ?? [], deps.queryN, deps.queryMaxChars);
         if (!q) return; // nothing to recall on
         const opts = { timeoutMs: recallTimeoutMs };

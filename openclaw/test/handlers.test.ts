@@ -449,6 +449,32 @@ test("recall: uses event.prompt when history is empty (fresh session)", async ()
   assert.equal(spy.searches[0]!.query, "what am I working on?");
 });
 
+test("recall: currentUserMessage is the query when the host supplies it", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  await h.recall(
+    {
+      prompt: "old turn\nold reply\nwhere is the deploy key?",
+      messages: [],
+      currentUserMessage: "where is the deploy key?",
+    },
+    ctx(),
+  );
+  assert.equal(spy.searches.length, 2);
+  for (const s of spy.searches) assert.equal(s.query, "where is the deploy key?");
+});
+
+test("recall: an explicit empty currentUserMessage recalls nothing, even with history", async () => {
+  const spy = spyClient();
+  const h = createHandlers(baseDeps(spy.client));
+  const out = await h.recall(
+    { prompt: "reconstructed", messages: [{ role: "user", content: "earlier question" }], currentUserMessage: "" },
+    ctx(),
+  );
+  assert.equal(out, undefined);
+  assert.equal(spy.searches.length, 0);
+});
+
 test("recall: empty query → no search, no injection", async () => {
   const spy = spyClient();
   const h = createHandlers(baseDeps(spy.client));
