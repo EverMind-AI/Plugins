@@ -22,7 +22,10 @@ from typing import Any
 from unicodedata import east_asian_width
 
 from .client import ADD_MAX_MESSAGES, EverosClient, EverosError
-from .provision import provision, stop_child
+# Bound under another name: Hermes >= 2026.9.7 setattr()s every sibling module onto the
+# package after this file runs, which would replace a global named `provision`.
+from .provision import provision as provision_everos
+from .provision import stop_child
 
 try:  # the real ABC exists inside a Hermes runtime
     from agent.memory_provider import MemoryProvider
@@ -479,7 +482,7 @@ class EverosMemoryProvider(MemoryProvider):
         client, cfg = self._client, self._cfg
 
         def _provision() -> None:
-            result = provision(client, cfg.start_cmd, cfg.everos_dir)
+            result = provision_everos(client, cfg.start_cmd, cfg.everos_dir)
             # Keep ANY child we spawned — including "readiness timeout (left
             # running)" — so shutdown can stop it; an untracked slow starter
             # would outlive Hermes holding the OME lock. On a re-init that

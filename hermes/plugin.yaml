@@ -1,5 +1,5 @@
 name: everos
-version: "1.0.0"
+version: "1.0.1"
 manifest_version: 1
 description: "EverOS-backed cross-session memory — markdown source of truth, hybrid recall, user + agent tracks."
 hooks:

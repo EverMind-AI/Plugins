@@ -55,16 +55,16 @@ class FakeClient:
 def make_provider(tmp_home: str, agent_context: str = "primary"):
     """Provider with inline daemons, provisioning stubbed, and a fake client."""
     provider = mod.EverosMemoryProvider()
-    real_spawn, real_provision = mod._spawn_daemon, mod.provision
+    real_spawn, real_provision = mod._spawn_daemon, mod.provision_everos
     mod._spawn_daemon = lambda fn: fn()
-    mod.provision = lambda *a, **k: provision_mod.ProvisionResult("failed", "stubbed")
+    mod.provision_everos = lambda *a, **k: provision_mod.ProvisionResult("failed", "stubbed")
     try:
         provider.initialize(
             "session-1", hermes_home=tmp_home, platform="cli", agent_context=agent_context
         )
     finally:
         mod._spawn_daemon = real_spawn
-        mod.provision = real_provision
+        mod.provision_everos = real_provision
     fake = FakeClient()
     provider._client = fake
     # inline daemons for the provider's later background posts
@@ -90,17 +90,17 @@ class TestLifecycle(unittest.TestCase):
     def test_initialize_stores_and_clips_session_id(self):
         provider, _ = make_provider(self.tmp.name)
         self.assertEqual(provider._sid, "session-1")
-        real_provision = mod.provision  # keep the re-init from real provisioning
-        mod.provision = lambda *a, **k: provision_mod.ProvisionResult("failed", "stub")
+        real_provision = mod.provision_everos  # keep the re-init from real provisioning
+        mod.provision_everos = lambda *a, **k: provision_mod.ProvisionResult("failed", "stub")
         try:
             provider.initialize("x" * 200, hermes_home=self.tmp.name)
         finally:
-            mod.provision = real_provision
+            mod.provision_everos = real_provision
         self.assertEqual(len(provider._sid), 128)
 
     def test_left_running_child_kept_for_shutdown(self):
         provider = mod.EverosMemoryProvider()
-        real_spawn, real_provision = mod._spawn_daemon, mod.provision
+        real_spawn, real_provision = mod._spawn_daemon, mod.provision_everos
 
         class DeadChild:
             def poll(self):
@@ -108,14 +108,14 @@ class TestLifecycle(unittest.TestCase):
 
         child = DeadChild()
         mod._spawn_daemon = lambda fn: fn()
-        mod.provision = lambda *a, **k: provision_mod.ProvisionResult(
+        mod.provision_everos = lambda *a, **k: provision_mod.ProvisionResult(
             "failed", "readiness timeout (left running)", child=child
         )
         try:
             provider.initialize("s", hermes_home=self.tmp.name)
         finally:
             mod._spawn_daemon = real_spawn
-            mod.provision = real_provision
+            mod.provision_everos = real_provision
         self.assertIs(provider._child, child)
 
     def test_shutdown_flushes(self):
