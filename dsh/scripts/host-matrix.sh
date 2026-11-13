@@ -17,7 +17,8 @@ VERSIONS=("$@")
   0.2.0-rc.2 0.2.1-rc.3 0.2.1-rc.5 0.2.2-rc.1 0.2.2-rc.2
 )
 PKG="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="$(mktemp -d -t dsh-host-matrix)"
+# A template with XXXXXX: GNU mktemp rejects macOS-style `-t prefix`.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/dsh-host-matrix.XXXXXX")" || exit 1
 trap 'rm -rf "$WORK"' EXIT INT TERM
 
 TARBALL="$(cd "$PKG" && npm pack --silent --pack-destination "$WORK" | tail -1)"
