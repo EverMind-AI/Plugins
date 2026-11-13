@@ -475,25 +475,6 @@ test("recall: an explicit empty currentUserMessage recalls nothing, even with hi
   assert.equal(spy.searches.length, 0);
 });
 
-test("recall: conversation audience keeps the owner's memory out, agent track stays", async () => {
-  const spy = spyClient();
-  const h = createHandlers(baseDeps(spy.client));
-  const audience = { kind: "conversation" as const, agentId: "main", sessionKey: "k", sessionId: "s" };
-  await h.recall({ prompt: "who is on call?", messages: [] }, ctx({ memoryAudience: audience }));
-  assert.equal(spy.searches.length, 1);
-  assert.ok("agent_id" in spy.searches[0]! && spy.searches[0]!.agent_id);
-});
-
-test("recall: owner-private audience searches both tracks", async () => {
-  const spy = spyClient();
-  const h = createHandlers(baseDeps(spy.client));
-  await h.recall(
-    { prompt: "who is on call?", messages: [] },
-    ctx({ memoryAudience: { kind: "owner-private", agentId: "main" } }),
-  );
-  assert.equal(spy.searches.length, 2);
-});
-
 test("recall: empty query → no search, no injection", async () => {
   const spy = spyClient();
   const h = createHandlers(baseDeps(spy.client));

@@ -22,14 +22,6 @@ export interface PluginHookAgentContext {
   modelProviderId?: string;
   modelId?: string;
   channelId?: string;
-  /**
-   * Host-resolved memory partition for the turn (OpenClaw 2026.11+). `owner-private`
-   * is the owner's direct chat; `conversation` is any other sender, group, channel,
-   * or thread. Absent on older hosts.
-   */
-  memoryAudience?:
-    | { kind: "owner-private"; agentId: string }
-    | { kind: "conversation"; agentId: string; sessionKey: string; sessionId: string };
   [key: string]: unknown;
 }
 

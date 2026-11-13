@@ -770,17 +770,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         if (!q) return; // nothing to recall on
         const opts = { timeoutMs: recallTimeoutMs };
 
-        // The user track is the owner's own memory (profile, episodes). OpenClaw
-        // marks any turn that is not the owner's direct chat (another sender, a
-        // group, channel, or thread) as `conversation` audience: keep the owner's
-        // memory out of it. The agent track (cases, skills) is the agent's own.
-        const ownerAudience = ctx.memoryAudience?.kind !== "conversation";
-        const userP: Promise<SearchResponse | undefined> =
-          deps.userId && ownerAudience
-            ? deps.client
-                .search({ user_id: deps.userId, app_id: deps.appId, project_id, query: q, include_profile: true }, opts)
-                .catch(() => undefined)
-            : Promise.resolve(undefined);
+        const userP: Promise<SearchResponse | undefined> = deps.userId
+          ? deps.client
+              .search({ user_id: deps.userId, app_id: deps.appId, project_id, query: q, include_profile: true }, opts)
+              .catch(() => undefined)
+          : Promise.resolve(undefined);
         const agentP: Promise<SearchResponse | undefined> = deps.client
           .search({ agent_id: deps.agentId, app_id: deps.appId, project_id, query: q }, opts)
           .catch(() => undefined);
