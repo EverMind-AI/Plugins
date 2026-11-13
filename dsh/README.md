@@ -20,7 +20,8 @@ turn.
 ## Requirements
 
 - Node.js `^22.19.0 || >=24.0.0`
-- DeepSeek Harness `0.1.0-rc.6` or newer within the `0.1.x` line
+- DeepSeek Harness `0.1.0-rc.6` through the `0.2.x` line (`scripts/host-matrix.sh` checks
+  0.1.0-rc.6 to 0.2.2-rc.2)
 - EverOS installed and initialized
 
 ```bash
@@ -217,14 +218,24 @@ authority.
 ```bash
 npm ci
 npm run ci                     # lint + typecheck + 20 unit tests + build
+./scripts/host-matrix.sh       # the PACKED artifact on each published DSH, stub EverOS
 ./scripts/e2e-everos.sh        # the PACKED artifact against a REAL EverOS
+./scripts/e2e-dsh-headless.sh  # real DSH CLI agent loop + real EverOS, two sessions
 ```
 
 `npm run ci` uses mocked HTTP and DSH-shaped event logs. It needs no credentials and
 starts no EverOS, but for the same reason it cannot tell you the plugin works against
 the real ones: both the fetch and the session are written by the tests themselves.
 
-`scripts/e2e-everos.sh` answers that question instead. It starts its own EverOS on its
+`scripts/host-matrix.sh` answers it for the DSH side. For each DSH version it installs
+`@deepseek-ai/dsh-agent` at that version (npm resolves the rest), unpacks what `npm pack`
+would ship next to it, and runs `scripts/host-check.mjs`: one turn on a real Session with
+a recall, a tool call and result, and a seal, judged by what a stub EverOS received. It
+needs no credentials and no EverOS. DSH has renamed what the plugin reads inside a minor
+line before (0.1.2 dropped `session.events`; 0.1.7 replaced the tool-result block), so
+run it against every new DSH release before widening the supported range.
+
+`scripts/e2e-everos.sh` answers the EverOS side. It starts its own EverOS on its
 own port under its own root, installs what `npm pack` would ship into a project holding
 DSH at its published versions, and drives the three lifecycle points through real cordis
 events on a real `@deepseek-ai/dsh-session` Session. Every check reads backend receipt —
@@ -244,8 +255,16 @@ DSH_E2E_SOURCE_CONFIG=~/.everos/everos.toml ./scripts/e2e-everos.sh
 - The EverOS add API has no idempotency key. An ambiguous network failure followed by a
   later retry may produce at-least-once capture semantics.
 - Recall currently has no management UI or explicit remember/forget tools.
-- `scripts/e2e-everos.sh` dispatches the agent events itself. That a real DSH turn emits
-  `agent/pre-step` at step 1 with the turn's user messages, and `agent/turn-stopping` once
-  per turn, is taken from the host's declared types rather than observed in a real run.
+- `scripts/e2e-everos.sh` installs the DSH packages' `latest` dist-tag, which is still
+  `0.1.0-rc.6` for `dsh-agent`; DSH 0.2.x is covered by `scripts/host-matrix.sh` only.
+- `host-matrix.sh` and `e2e-everos.sh` dispatch the agent events themselves.
+  `scripts/e2e-dsh-headless.sh` is the one that goes through DSH's own agent loop: it
+  installs the DSH CLI (0.2.2-rc.1 by default; needs Node >= 24.9 and `DEEPSEEK_API_KEY`),
+  adds the packed plugin to an isolated headless profile, states a fact in one session,
+  and passes only if a fresh session answers with it while the same question with recall
+  cut off does not. It spends real tokens. The Desktop and Web profiles are not covered.
+- DSH bounds plugin shutdown: a headless run waits about 5 s for the seal's `/flush`,
+  then exits. EverOS has the request by then and finishes the extraction, but a flush
+  that runs longer gets no response and may not appear in EverOS's access log.
 - Every failure path fails open into `logger.warn`. Memory stopping is not otherwise
   visible to the user.

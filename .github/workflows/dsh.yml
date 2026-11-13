@@ -48,3 +48,6 @@ jobs:
 
       - name: Verify npm package contents
         run: npm pack --dry-run
+
+      - name: Run the packed plugin on each supported DSH version
+        run: ./scripts/host-matrix.sh

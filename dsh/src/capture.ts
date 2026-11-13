@@ -1,15 +1,22 @@
 /** Lossless-enough DSH event mapping for EverOS user and agent extraction. */
 
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 import { agentIdOf } from './identity.js'
-import { blocksToText, isDirectUserMessage } from './recall.js'
+import { blocksToText, isDirectUserMessage, sessionEvents } from './recall.js'
 import type { MessageItem, ToolCall } from './types.js'
 
 export interface CapturedMessage {
   seq: number
   item: MessageItem
+}
+
+interface LegacyToolResult {
+  type: 'tool-result'
+  toolCallId: string
+  content: readonly ContentBlock[]
+  isError?: boolean
 }
 
 export interface CaptureSlice {
@@ -48,9 +55,9 @@ function toolCalls(blocks: readonly ContentBlock[], maxChars: number): ToolCall[
   return calls.length === 0 ? undefined : calls
 }
 
-function toolNameIndex(session: Session): Map<string, string> {
+function toolNameIndex(events: readonly SessionEvent[]): Map<string, string> {
   const names = new Map<string, string>()
-  for (const event of session.events) {
+  for (const event of events) {
     if (event.type === 'tool/call') names.set(String(event.data.callId), event.data.name)
   }
   return names
@@ -71,11 +78,12 @@ export function captureMessagesSince(
   maxChars: number,
 ): CaptureSlice {
   const agentId = agentIdOf(session, configuredAgentId)
-  const names = toolNameIndex(session)
+  const events = sessionEvents(session)
+  const names = toolNameIndex(events)
   const output: CapturedMessage[] = []
   let scannedThroughSeq = afterSeq
 
-  for (const event of session.events) {
+  for (const event of events) {
     if (event.seq <= afterSeq) continue
     scannedThroughSeq = Math.max(scannedThroughSeq, event.seq)
     const timestamp = Number.isSafeInteger(event.time) && event.time > 0 ? event.time : Date.now()
@@ -118,10 +126,13 @@ export function captureMessagesSince(
 
       case 'tool/result': {
         const message = event.data.message
-        const block = message.content[0]
-        const callId = String(block.toolCallId)
-        const resultText = blocksToText(block.content)
-        const status = block.isError || event.data.error ? '[tool error]\n' : ''
+        // DSH <=0.1.5 wrapped the result in a single `tool-result` block.
+        const legacy = (message.content as readonly unknown[])[0] as LegacyToolResult | undefined
+        const wrapped = legacy?.type === 'tool-result' ? legacy : undefined
+        const callId = String(wrapped?.toolCallId ?? message.toolCallId)
+        const resultText = blocksToText(wrapped?.content ?? message.content)
+        const status =
+          (wrapped?.isError ?? message.isError) || event.data.error ? '[tool error]\n' : ''
         const content = clipText(`${status}${resultText}`, maxChars).trim() || '[empty tool result]'
         output.push({
           seq: event.seq,
