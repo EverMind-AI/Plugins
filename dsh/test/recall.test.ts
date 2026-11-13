@@ -15,18 +15,18 @@ function userMessage(id: string, text: string, source: UserMessage['source']): U
     role: 'user',
     content: [{ type: 'text', text }],
     source,
-  } as UserMessage
+  } as unknown as UserMessage
 }
 
 test('builds recall queries from direct users while excluding plugin context', () => {
   const previous = userMessage('m1', 'older requirement', { kind: 'user' })
   const plugin = userMessage('m2', 'do not query this', {
-    kind: 'plugin',
-    plugin: 'test',
+    kind: 'everos-memory',
+    form: 'recall',
   })
   const current = userMessage('m3', 'current task', { kind: 'user' })
   const session = {
-    events: [
+    snapshotEvents: () => [
       { type: 'user/message', seq: 0, time: 1, data: previous },
       { type: 'user/message', seq: 1, time: 2, data: plugin },
     ],
@@ -78,7 +78,7 @@ test('sends the configured retrieval method to both owner tracks', async () => {
     },
   } as unknown as EverosClient
   const session = {
-    events: [],
+    snapshotEvents: () => [],
     header: { cwd: '/work/project', agentPreset: 'coding/default' },
   } as unknown as Session
 

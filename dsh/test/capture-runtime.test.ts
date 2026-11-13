@@ -10,7 +10,7 @@ import { estimateMessageTokens, MemoryRuntime } from '../src/memory-runtime.js'
 import type { AddRequest, FlushRequest, PluginLogger } from '../src/types.js'
 
 function fakeSession(id = 'session-1', cwd = '/work/repository'): Session & { events: unknown[] } {
-  return {
+  const session = {
     id,
     firstLiveSeq: 0,
     header: {
@@ -39,7 +39,7 @@ function fakeSession(id = 'session-1', cwd = '/work/repository'): Session & { ev
         data: {
           id: 'memory',
           role: 'user',
-          source: { kind: 'plugin', plugin: 'everos-memory' },
+          source: { kind: 'everos-memory', form: 'recall' },
           content: [{ type: 'text', text: 'recalled data' }],
         },
       },
@@ -77,20 +77,17 @@ function fakeSession(id = 'session-1', cwd = '/work/repository'): Session & { ev
           step: 1,
           message: {
             id: 't1',
-            role: 'user',
-            source: { kind: 'tool', callId: 'call-1' },
-            content: [
-              {
-                type: 'tool-result',
-                toolCallId: 'call-1',
-                content: [{ type: 'text', text: 'file contents' }],
-              },
-            ],
+            role: 'tool',
+            source: { kind: 'tool' },
+            toolCallId: 'call-1',
+            content: [{ type: 'text', text: 'file contents' }],
           },
         },
       },
-    ],
-  } as unknown as Session & { events: unknown[] }
+    ] as unknown[],
+    snapshotEvents: () => session.events,
+  }
+  return session as unknown as Session & { events: unknown[] }
 }
 
 test('maps direct user, assistant tool call, and tool result without reasoning echoes', () => {
@@ -220,7 +217,7 @@ test('runtime skips resumed seed history and splits the 500-message API limit', 
       createdAt: 1,
       cwd: '/work/repository',
     },
-    events,
+    snapshotEvents: () => events,
   } as unknown as Session
 
   await runtime.capture(session)

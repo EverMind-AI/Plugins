@@ -1,8 +1,8 @@
 /** Recall query construction and safe model-context rendering. */
 
-import type { ContentBlock, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { ContentBlock, ContextFormed, UserMessage } from '@deepseek-ai/dsh-llm'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 
 import type { ResolvedConfig } from './config.js'
 import type { EverosClient } from './everos-client.js'
@@ -27,7 +27,12 @@ function imageLabel(block: Extract<ContentBlock, { type: 'image' }>): string {
 }
 
 /** Convert model-visible content to recall/capture text without exposing attachment paths. */
-export function blocksToText(blocks: readonly ContentBlock[], includeReasoning = false): string {
+export function blocksToText(
+  blocks: readonly ContentBlock[] | string,
+  includeReasoning = false,
+): string {
+  // Field report (EverOS #551): a DSH 0.2.1 tool result arrived as a bare string.
+  if (typeof blocks === 'string') return blocks.trim()
   const parts: string[] = []
   for (const block of blocks) {
     switch (block.type) {
@@ -39,11 +44,6 @@ export function blocksToText(blocks: readonly ContentBlock[], includeReasoning =
         break
       case 'image':
         parts.push(imageLabel(block))
-        break
-      case 'tool-call':
-        break
-      case 'tool-result':
-        parts.push(blocksToText(block.content, includeReasoning))
         break
       default:
         break
@@ -60,8 +60,17 @@ function clipHead(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : text.slice(0, maxChars)
 }
 
+/** The session log on every supported DSH: 0.1.2 replaced `session.events` with `snapshotEvents()`. */
+export function sessionEvents(session: Session): readonly SessionEvent[] {
+  // ponytail: snapshotEvents() is marked deprecated (sync read) but is the only
+  // public reader from 0.1.2 through 0.2.x; move to a `session/event` listener
+  // if a later DSH removes it.
+  if (typeof session.snapshotEvents === 'function') return session.snapshotEvents()
+  return (session as unknown as { events?: readonly SessionEvent[] }).events ?? []
+}
+
 function recentDirectUserMessages(session: Session): UserMessage[] {
-  return session.events.flatMap((event) => {
+  return sessionEvents(session).flatMap((event) => {
     if (event.type !== 'user/message' || !isDirectUserMessage(event.data)) return []
     return [event.data]
   })
@@ -218,6 +227,13 @@ export async function recallMessage(options: RecallOptions): Promise<UserMessage
   if (!text) return undefined
   return createUserMessage({
     content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN_NAME, form: 'recall' },
+    source: { kind: PLUGIN_NAME, form: 'recall' },
   })
+}
+
+// DSH 0.1.7+ dropped the shared `plugin` source kind; each producer declares its own.
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    [PLUGIN_NAME]: { kind: typeof PLUGIN_NAME } & ContextFormed
+  }
 }
