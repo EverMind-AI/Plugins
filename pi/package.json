@@ -1,0 +1,33 @@
+{
+  "name": "pi-everos",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "EverOS Cloud memory plugin for Pi Agent: proactive recall and save via uvx MCP.",
+  "keywords": ["pi-package", "everos", "memory", "mcp", "pi-agent"],
+  "author": "Chasen Liao",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EverMind-AI/Plugins.git",
+    "directory": "pi"
+  },
+  "homepage": "https://github.com/EverMind-AI/Plugins/tree/main/pi",
+  "bugs": {
+    "url": "https://github.com/EverMind-AI/Plugins/issues"
+  },
+  "files": ["extensions", "src", "schemas", "README.md", "README_zh.md", "CHANGELOG.md", "docs"],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "pi": {
+    "extensions": ["./extensions/index.ts"],
+    "image": "./docs/everos-doctor.png"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 tests/config.test.mjs tests/guard.test.mjs tests/mcp.test.mjs tests/prompt.test.mjs tests/redact.test.mjs tests/report.test.mjs tests/scope.test.mjs tests/text.test.mjs"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  }
+}

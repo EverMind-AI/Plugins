@@ -15,6 +15,7 @@ app.
 | [`codex/`](./codex) | [Codex](https://developers.openai.com/codex) | `codex plugin marketplace add EverMind-AI/Plugins` then `codex plugin add everos@everos` | 🧪 built — pre-release verification |
 | [`hermes/`](./hermes) | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes plugins install EverMind-AI/plugins/hermes` | 🧪 built — pre-release verification |
 | [`dsh/`](./dsh) | [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) | `dsh plugin --profile web add @everos-ai/dsh-plugin` | 🧪 built — pre-release verification |
+| [`pi/`](./pi) | [Pi Agent](https://github.com/earendil-works/pi) | `pi install npm:pi-everos` or clone this repo and `pi install ./pi` | 🧪 built — pre-release verification |
 | [`dify/`](./dify) | [Dify](https://dify.ai) | Package with the Dify CLI, then upload the `.difypkg` in Dify | 🧪 built — Marketplace submission pending |
 | [`dify_cloud/`](./dify_cloud) | [Dify](https://dify.ai) | Configure an EverOS Cloud API URL and API Key after installation | 🧪 built — Marketplace submission pending |
 
@@ -22,6 +23,8 @@ app.
 
 - **Agent hosts** such as Claude Code, Codex, OpenClaw, Hermes, and DSH automate the
   recall → capture → seal lifecycle and fail open when EverOS is unavailable.
+- **Pi Agent** registers EverOS Cloud MCP tools and injects a memory protocol so the
+  model recalls and saves on its own.
 - **Workflow platforms** such as Dify expose explicit search and add tools, so
   builders decide exactly where memory runs in a workflow.
 
@@ -98,6 +101,10 @@ integrations into one open-source ecosystem.
 <tr>
 <td><strong><a href="https://github.com/deepseek-ai/DeepSeek-Harness">DeepSeek Harness</a></strong></td>
 <td><a href="https://github.com/EverMind-AI/plugins/tree/main/dsh">DSH plugin</a> for memory-aware DeepSeek Harness agents.</td>
+</tr>
+<tr>
+<td><strong><a href="https://github.com/earendil-works/pi">Pi Agent</a></strong></td>
+<td><a href="https://github.com/EverMind-AI/plugins/tree/main/pi">Pi plugin</a> for EverOS Cloud memory via MCP tools and an injected protocol.</td>
 </tr>
 <tr>
 <td><strong><a href="https://dify.ai">Dify</a></strong></td>
