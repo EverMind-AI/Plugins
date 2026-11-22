@@ -1,0 +1,24 @@
+{
+  "name": "everos-antigravity",
+  "version": "1.0.0-rc1",
+  "private": true,
+  "description": "EverOS cognitive memory plugin for Google Antigravity - lifecycle hooks, skills, native MCP server, and resilient 2PC state machine.",
+  "author": "Sethyrial",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "check": "node scripts/check-manifests.mjs",
+    "install:workspace": "node scripts/install.mjs",
+    "test": "node scripts/check-manifests.mjs && node --test --test-concurrency=1 tests/*.test.js",
+    "ci": "npm test",
+    "seed:demo": "node scripts/seed-demo.js",
+    "verify:live": "node scripts/live-verify.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/LoveS0ph1e/ArtEmis.git"
+  }
+}

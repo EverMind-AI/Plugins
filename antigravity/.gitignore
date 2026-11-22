@@ -1,0 +1,23 @@
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# Logs and runtime artifacts
+*.log
+*.tmp
+*.zip
+.DS_Store
+Thumbs.db
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Test temporary sandboxes
+tests/fixtures/live-sandbox/live_transcript.jsonl
+
+# Internal development notes & scratch docs
+docs/
+*.bak
+

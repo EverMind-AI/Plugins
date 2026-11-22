@@ -1,0 +1,10 @@
+{
+  "name": "everos",
+  "version": "0.1.0",
+  "description": "EverOS cross-session cognitive memory for Google Antigravity. Recalls relevant covenants and exemplars, captures message trajectories, and auto-seals memory episodes.",
+  "suggestedPrompts": [
+    "/everos status",
+    "/everos search memory for recent architecture decisions",
+    "/everos flush"
+  ]
+}
