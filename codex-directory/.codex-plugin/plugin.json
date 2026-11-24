@@ -1,0 +1,105 @@
+{
+  "name": "everos",
+  "version": "1.0.0",
+  "description": "EverOS, the context and memory layer for your organization's AI agents, in ChatGPT and Codex: save facts and decisions to a memory space, then search and browse them later.",
+  "author": {
+    "name": "Evermind AI, Inc.",
+    "email": "contact@evermind.ai",
+    "url": "https://evermind.ai/everos"
+  },
+  "homepage": "https://evermind.ai/everos",
+  "keywords": [
+    "memory",
+    "agents",
+    "mcp",
+    "everos"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "EverOS",
+    "shortDescription": "Context and memory for agents",
+    "longDescription": "EverOS is the context and memory layer for your organization's AI agents. This plugin gives the assistant a memory that lasts beyond a single conversation. When you share something worth keeping, such as a decision, a project detail or a preference, the assistant can save it to EverOS. In later conversations it can search those memories and read the profile EverOS builds from them, so nobody has to explain the same context twice.\n\nIt is built for teams that run their own agents on EverOS. The assistant uses a memory space in the same EverOS account as your agents, so what one of them learns is there for the others.\n\nMemories live in your EverOS account, in the memory space you choose when you connect. You decide what is kept: ask the assistant not to remember something and it won't, ask it to forget the current conversation and it deletes what that conversation stored, and you can disconnect the app or delete a memory space at any time from the EverOS Console.\n\nWhat you can do:\n\n- Save a decision, project detail or preference so it is available in future conversations\n- Ask what was decided or said in earlier conversations\n- Get a summary of the profile EverOS has built from your memories\n- Browse what has been stored, newest first\n- Delete everything the current conversation stored\n\nLimitations:\n\n- Requires an EverOS account (sign up at everos.evermind.ai).\n- The assistant only reads and writes the memory space you chose when connecting. It cannot see your other spaces or anyone else's data.\n- A newly saved memory can take a few minutes to become searchable.\n- Forgetting a conversation deletes the memories it stored, but not the profile EverOS has already built from them. To remove everything, delete the memory space in the EverOS Console.\n\nEverOS is not EverMe. EverMe is EverMind's work memory for people and the AI tools they use. It is built on EverOS and listed separately, with its own account.",
+    "developerName": "Evermind AI, Inc.",
+    "category": "Productivity",
+    "capabilities": [
+      "Save decisions, project details and preferences for later conversations",
+      "Search memories from earlier conversations",
+      "Read the profile built from your memories",
+      "Browse stored memories by date",
+      "Delete what the current conversation stored"
+    ],
+    "defaultPrompt": [
+      "What does EverOS remember about my current projects?",
+      "Remember this decision: we're moving the launch to March 3.",
+      "Forget what we saved in this conversation."
+    ],
+    "brandColor": "#E0A100",
+    "brandColorDark": "#FFC53D",
+    "logo": "./assets/everos-icon-512-square.png",
+    "composerIcon": "./assets/everos-icon-512-square.png",
+    "websiteURL": "https://evermind.ai/everos",
+    "supportURL": "https://evermind.ai/contact-us",
+    "privacyPolicyURL": "https://evermind.ai/privacy-policy",
+    "termsOfServiceURL": "https://evermind.ai/terms-of-service"
+  },
+  "extensions": {
+    "com.openai": {
+      "review": {
+        "test_cases": {
+          "positive": [
+            {
+              "description": "Save a preference",
+              "prompt": "Save to EverOS that I prefer window seats and I'm planning a trip to Lisbon in March.",
+              "tools_triggered": "add_memory",
+              "expected_behavior": "Calls add_memory and confirms the preference and the trip were saved."
+            },
+            {
+              "description": "Recall in a new chat",
+              "prompt": "What does EverOS remember about my travel plans?",
+              "tools_triggered": "search_memory",
+              "expected_behavior": "In a new chat, a few minutes after the save, mentions Lisbon in March and window seats. May also call get_profile."
+            },
+            {
+              "description": "Read the profile",
+              "prompt": "What does my EverOS profile say about me?",
+              "tools_triggered": "get_profile",
+              "expected_behavior": "Summarizes the stored preferences of the test user."
+            },
+            {
+              "description": "Browse recent memories",
+              "prompt": "Show me the latest things EverOS has saved about me.",
+              "tools_triggered": "list_memories",
+              "expected_behavior": "Lists recent memories, newest first."
+            },
+            {
+              "description": "Forget this conversation",
+              "prompt": "Forget what we saved to EverOS in this conversation.",
+              "tools_triggered": "forget_session",
+              "expected_behavior": "In the same chat as the first test, deletes what that chat stored and confirms the deletion. A later search no longer finds the Lisbon trip."
+            }
+          ],
+          "negative": [
+            {
+              "description": "The user asks not to remember. Expected: the model answers the question and does not call add_memory.",
+              "prompt": "My home address is 12 Rua Augusta, but don't remember that. Recommend a coffee grinder."
+            },
+            {
+              "description": "Credential. EverOS does not store secrets. Expected: nothing is stored; the model declines, and if it does call add_memory the server refuses credentials.",
+              "prompt": "Save my API key sk-live-1234567890abcdef to EverOS for later."
+            },
+            {
+              "description": "Unrelated question that does not depend on memory. Expected: the model answers directly and calls no EverOS tool.",
+              "prompt": "What's 17 × 23?"
+            }
+          ]
+        },
+        "commerce": false,
+        "commerce_description": "EverOS does not sell products or process payments in ChatGPT or Codex."
+      },
+      "publication": {
+        "release_notes": "First release: save decisions and project context, search and browse earlier memories, read your EverOS profile, and delete what the current conversation stored."
+      }
+    }
+  }
+}
