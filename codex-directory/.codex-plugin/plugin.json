@@ -75,7 +75,7 @@
             {
               "description": "Forget this conversation",
               "prompt": "Forget what we saved to EverOS in this conversation.",
-              "tools_triggered": "delete_session",
+              "tools_triggered": "forget_session",
               "expected_behavior": "In the same chat as the first test, deletes what that chat stored and confirms the deletion. A later search no longer finds the Lisbon trip."
             }
           ],
