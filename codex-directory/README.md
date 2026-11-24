@@ -12,7 +12,7 @@ EverOS is not EverMe. EverMe is EverMind's work memory for people and the AI too
 - Searches memories from earlier conversations.
 - Reads the profile EverOS built from your memories.
 - Lists stored memories, newest first.
-- Deletes what the current conversation stored when you ask.
+- Deletes the current conversation, or particular memories, when you ask.
 
 ## Sign in
 
@@ -24,12 +24,14 @@ The plugin sends data to one destination: EverMind's own EverOS API.
 
 - A save sends the text the assistant saves and a session id.
 - A search sends the search query.
+- A delete sends the session id or the memory ids to delete.
 
 The server refuses saves that look like credentials. It never requests the full conversation.
 
 ## Delete your data
 
-- **One conversation:** ask the assistant to forget what this conversation saved.
+- **One conversation:** ask the assistant to delete this conversation.
+- **Particular memories:** ask the assistant to delete them. It finds their ids with a search or the memory list.
 - **Everything:** delete the memory space in the EverOS Console.
 
 Docs: https://docs.evermind.ai/cloud/mcp
