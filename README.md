@@ -17,6 +17,7 @@ app.
 | [`dsh/`](./dsh) | [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) | `dsh plugin --profile web add @everos-ai/dsh-plugin` | 🧪 built — pre-release verification |
 | [`dify/`](./dify) | [Dify](https://dify.ai) | Package with the Dify CLI, then upload the `.difypkg` in Dify | 🧪 built — Marketplace submission pending |
 | [`dify_cloud/`](./dify_cloud) | [Dify](https://dify.ai) | Configure an EverOS Cloud API URL and API Key after installation | 🧪 built — Marketplace submission pending |
+| [`codex-directory/`](./codex-directory) | [ChatGPT](https://chatgpt.com) and [Codex](https://developers.openai.com/codex) app directory | Connects to the hosted EverOS MCP server (`https://everos-mcp.evermind.ai/mcp`) with OAuth; no local server | 🧪 built — directory submission pending |
 
 ## Integration models
 

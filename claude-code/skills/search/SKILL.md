@@ -1,6 +1,6 @@
 ---
 name: search
-description: Search the user's EverOS memory for this project and show what a prompt would recall. Use when the user asks what was decided or discussed before, wants to check whether something was remembered, or asks to search their memory.
+description: Search the user's EverOS memory for this project and show what a prompt would recall. Use when the user asks what was decided or discussed before, wants to check whether something was remembered, or asks to search their memory. If the user names EverMe or their EverMe account, use the EverMe tools instead.
 ---
 
 # EverOS search

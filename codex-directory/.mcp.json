@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "everos": {
+      "url": "https://everos-mcp.evermind.ai/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {
+              "mode": "dcr"
+            },
+            "baseScopes": [
+              "openid",
+              "email"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
